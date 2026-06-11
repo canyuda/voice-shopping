@@ -34,6 +34,8 @@
 
 ## 3. 系统架构
 
+![system-architecture.png](system-architecture.png)
+
 ### 3.1 整体架构图
 
 ```
