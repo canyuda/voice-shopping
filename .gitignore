@@ -1,0 +1,32 @@
+# Build
+target/
+*.jar
+*.war
+*.class
+
+# IDE
+.idea/
+*.iml
+.vscode/
+.settings/
+.project
+.classpath
+.factorypath
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Sensitive config
+.env
+application-dev.yml
+application-local.yml
+
+# Logs
+*.log
+logs/
+
+# Maven
+*.flattened-pom.xml
