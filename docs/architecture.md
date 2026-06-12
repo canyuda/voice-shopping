@@ -180,10 +180,10 @@ web → business → ai → infrastructure → common
 
 | Agent | 职责 | 模型 | 输入 | 输出 |
 |-------|------|------|------|------|
-| **IntentAgent** | 意图理解 + 槽位抽取 | qwen-max | userId, sessionId, utterance, recentHistory | intent, slots, confidence |
+| **IntentAgent** | 意图理解 | qwen-turbo | userId, sessionId, utterance, recentHistory | intent, slots, confidence |
 | **ClarifyAgent** | 需求澄清（规则优先，LLM 兜底） | qwen-turbo | slots, category | action(ASK/READY), questionToAsk |
-| **RecAgent** | 向量检索 + LLM 排序重排 | qwen-turbo | slots, userProfile | recommendations[], matchScore, explanationTone |
-| **SentimentAgent** | 情感应答 + 口语化包装 | qwen-max | recommendations, userUtterance, sessionMood | speechText, displayBlocks[] |
+| **RecAgent** | 商品推荐 | qwen-turbo | slots, userProfile | recommendations[], matchScore |
+| **SentimentAgent** | 情感问答 | qwen-max | recommendations, userUtterance, sessionMood | speechText, displayBlocks[] |
 
 **意图枚举：** `PRODUCT_RECOMMENDATION` / `CLARIFY_NEEDED` / `PRODUCT_COMPARE` / `CHITCHAT` / `ORDER_CONFIRM` / `OUT_OF_SCOPE`
 

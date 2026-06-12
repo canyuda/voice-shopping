@@ -59,15 +59,16 @@ public final class RedisKeys {
     }
 
     // ------------------------------------------------------------------
-    // Intent cache: vs:intent_cache:{userId}:{hash}
+    // Intent cache: vs:intent_cache:{sessionId}:{hash}
     // Type: String (JSON) | TTL: 5min
-    // hash = SHA256(userId + utterance + recentHistoryHash)
+    // hash = SHA256(utterance + historyText)
+    // Session-scoped: aligns with ShortTermMemory / AgentFactory lifecycle.
     // ------------------------------------------------------------------
 
     private static final String INTENT_CACHE = PREFIX + "intent_cache:";
 
-    public static String intentCache(long userId, String hash) {
-        return INTENT_CACHE + userId + ":" + hash;
+    public static String intentCache(String sessionId, String hash) {
+        return INTENT_CACHE + sessionId + ":" + hash;
     }
 
     // ------------------------------------------------------------------
