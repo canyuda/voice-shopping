@@ -62,41 +62,6 @@
             <artifactId>okio</artifactId>
         </dependency>
 
-        <!-- NLS SDK for ASR/TTS -->
-        <dependency>
-            <groupId>com.alibaba.nls</groupId>
-            <artifactId>nls-sdk-common</artifactId>
-            <version>2.2.1</version>
-            <exclusions>
-                <exclusion>
-                    <groupId>org.slf4j</groupId>
-                    <artifactId>slf4j-simple</artifactId>
-                </exclusion>
-            </exclusions>
-        </dependency>
-        <dependency>
-            <groupId>com.alibaba.nls</groupId>
-            <artifactId>nls-sdk-transcriber</artifactId>
-            <version>2.2.1</version>
-            <exclusions>
-                <exclusion>
-                    <groupId>org.slf4j</groupId>
-                    <artifactId>slf4j-simple</artifactId>
-                </exclusion>
-            </exclusions>
-        </dependency>
-        <dependency>
-            <groupId>com.alibaba.nls</groupId>
-            <artifactId>nls-sdk-tts</artifactId>
-            <version>2.2.1</version>
-            <exclusions>
-                <exclusion>
-                    <groupId>org.slf4j</groupId>
-                    <artifactId>slf4j-simple</artifactId>
-                </exclusion>
-            </exclusions>
-        </dependency>
-
         <dependency>
             <groupId>org.projectlombok</groupId>
             <artifactId>lombok</artifactId>

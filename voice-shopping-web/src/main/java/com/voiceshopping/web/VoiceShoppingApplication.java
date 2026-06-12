@@ -2,6 +2,7 @@ package com.voiceshopping.web;
 
 import org.springframework.boot.SpringApplication;
 import org.springframework.boot.autoconfigure.SpringBootApplication;
+import org.springframework.boot.context.properties.ConfigurationPropertiesScan;
 import org.springframework.boot.persistence.autoconfigure.EntityScan;
 import org.springframework.cache.annotation.EnableCaching;
 import org.springframework.data.jpa.repository.config.EnableJpaRepositories;
@@ -12,6 +13,7 @@ import org.springframework.scheduling.annotation.EnableScheduling;
 @EnableScheduling
 @EnableCaching
 @SpringBootApplication(scanBasePackages = "com.voiceshopping")
+@ConfigurationPropertiesScan(basePackages = "com.voiceshopping")
 @EntityScan(basePackages = "com.voiceshopping.infrastructure.repository.entity")
 @EnableJpaRepositories(basePackages = "com.voiceshopping.infrastructure.repository")
 public class VoiceShoppingApplication {

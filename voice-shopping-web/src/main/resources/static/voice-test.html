@@ -1,0 +1,311 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>🎤</text></svg>">
+<title>Voice Shopping — 调试页</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; background: #1a1a2e; color: #e0e0e0; display: flex; flex-direction: column; align-items: center; padding: 40px 20px; min-height: 100vh; }
+  h1 { font-size: 24px; margin-bottom: 24px; }
+  #status { font-size: 14px; margin-bottom: 16px; padding: 8px 16px; border-radius: 8px; background: #16213e; }
+  #btn { font-size: 18px; padding: 16px 48px; border: none; border-radius: 12px; cursor: pointer; font-weight: 600; transition: all 0.2s; }
+  #btn:disabled { opacity: 0.4; cursor: not-allowed; }
+  #btn.idle { background: #0f3460; color: #e0e0e0; }
+  #btn.connecting { background: #533483; color: #e0e0e0; }
+  #btn.recording { background: #e94560; color: #fff; }
+  #btn.waiting { background: #f0a500; color: #1a1a2e; }
+  #btn.closing { background: #533483; color: #e0e0e0; }
+  #volume-bar-container { width: 300px; height: 12px; background: #16213e; border-radius: 6px; margin-top: 16px; overflow: hidden; }
+  #volume-bar { height: 100%; width: 0; background: linear-gradient(90deg, #0f3460, #e94560); border-radius: 6px; transition: width 0.05s; }
+  #log { width: 100%; max-width: 600px; margin-top: 24px; background: #16213e; border-radius: 12px; padding: 16px; height: 300px; overflow-y: auto; font-family: "SF Mono", "Fira Code", monospace; font-size: 12px; line-height: 1.6; }
+  .log-partial { color: #aaa; }
+  .log-final { color: #4fc3f7; font-weight: 600; }
+  .log-done { color: #66bb6a; }
+  .log-error { color: #ef5350; }
+  .log-tts { color: #ce93d8; }
+  .log-system { color: #78909c; }
+</style>
+</head>
+<body>
+<h1>🎤 语音购物调试页</h1>
+<div id="status">状态: IDLE</div>
+<button id="btn" class="idle">开始录音</button>
+<div id="volume-bar-container"><div id="volume-bar"></div></div>
+<pre id="log"></pre>
+
+<script>
+(() => {
+  // --- State Machine ---
+  const STATES = { IDLE: 'IDLE', CONNECTING: 'CONNECTING', RECORDING: 'RECORDING', WAITING: 'WAITING', CLOSING: 'CLOSING' };
+  const BTN_TEXT = { IDLE: '开始录音', CONNECTING: '连接中...', RECORDING: '停止录音', WAITING: '等待回复...', CLOSING: '关闭中...' };
+  const BTN_CLASS = { IDLE: 'idle', CONNECTING: 'connecting', RECORDING: 'recording', WAITING: 'waiting', CLOSING: 'closing' };
+
+  let state = STATES.IDLE;
+  let ws = null;
+  let audioCtx = null;
+  let mediaStream = null;
+  let workletNode = null;
+  let userStopped = false;
+  let playbackTime = 0;
+
+  const btn = document.getElementById('btn');
+  const statusEl = document.getElementById('status');
+  const volumeBar = document.getElementById('volume-bar');
+  const logEl = document.getElementById('log');
+
+  function setState(newState) {
+    state = newState;
+    statusEl.textContent = `状态: ${state}`;
+    btn.textContent = BTN_TEXT[state];
+    btn.className = BTN_CLASS[state];
+    btn.disabled = (state === STATES.CONNECTING || state === STATES.WAITING || state === STATES.CLOSING);
+  }
+
+  function log(msg, cls = 'log-system') {
+    const time = new Date().toLocaleTimeString('zh-CN', { hour12: false, fractionalSecondDigits: 3 });
+    logEl.textContent += `[${time}] ${msg}\n`;
+    // Apply class to last line — simplified: just append
+    logEl.scrollTop = logEl.scrollHeight;
+  }
+
+  // --- Cleanup ---
+  function cleanup() {
+    if (workletNode) { workletNode.disconnect(); workletNode = null; }
+    if (mediaStream) { mediaStream.getTracks().forEach(t => t.stop()); mediaStream = null; }
+    if (audioCtx) { audioCtx.close().catch(() => {}); audioCtx = null; }
+    if (ws) { ws.onopen = null; ws.onclose = null; ws.onmessage = null; ws.onerror = null; ws.close(); ws = null; }
+    playbackTime = 0;
+    volumeBar.style.width = '0';
+  }
+
+  // --- Start Recording ---
+  async function start() {
+    cleanup();
+    userStopped = false;
+    log('[状态] userStopped = false', 'log-system');
+    setState(STATES.CONNECTING);
+
+    // Connect WebSocket
+    const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
+    const currentWs = new WebSocket(`${proto}//${location.host}/ws/voice`);
+    ws = currentWs;
+
+    currentWs.onopen = async () => {
+      log('WebSocket 已连接', 'log-system');
+      setState(STATES.RECORDING);
+
+      try {
+        await startAudio(currentWs);
+      } catch (e) {
+        log(`音频初始化失败: ${e.message}`, 'log-error');
+        cleanup();
+        setState(STATES.IDLE);
+      }
+    };
+
+    currentWs.onmessage = (event) => {
+      if (event.data instanceof Blob) {
+        // TTS PCM frame
+        event.data.arrayBuffer().then(buf => playPcm(buf));
+        return;
+      }
+      // JSON signal
+      try {
+        const signal = JSON.parse(event.data);
+        switch (signal.type) {
+          case 'asr_partial':
+            log(`[ASR 部分] ${signal.text}`, 'log-partial');
+            break;
+          case 'asr_final':
+            log(`[ASR 最终] ${signal.text}`, 'log-final');
+            break;
+          case 'agent_status':
+            log(`[Agent] ${signal.status}`, signal.status === 'done' ? 'log-done' : 'log-system');
+            if (signal.status === 'done' && userStopped) {
+              log('[状态] TTS done + userStopped=true，关闭 WebSocket', 'log-system');
+              currentWs.close();
+              setState(STATES.IDLE);
+            } else if (signal.status === 'done') {
+              log('[状态] TTS done 但 userStopped=false，保持连接', 'log-system');
+            }
+            break;
+          case 'error':
+            log(`[错误] ${signal.code}: ${signal.message}`, 'log-error');
+            break;
+        }
+      } catch (e) {
+        log(`解析消息失败: ${event.data}`, 'log-error');
+      }
+    };
+
+    currentWs.onclose = () => {
+      log('WebSocket 已关闭', 'log-system');
+      cleanup();
+      setState(STATES.IDLE);
+    };
+
+    currentWs.onerror = (e) => {
+      log('WebSocket 错误', 'log-error');
+      cleanup();
+      setState(STATES.IDLE);
+    };
+  }
+
+  // --- Audio Capture ---
+  async function startAudio(currentWs) {
+    audioCtx = new AudioContext(); // Don't specify sampleRate — use browser native
+    mediaStream = await navigator.mediaDevices.getUserMedia({
+      audio: {
+        echoCancellation: true,
+        noiseSuppression: false,  // Prevent Chrome from weakening low-volume speech
+        autoGainControl: true
+      }
+    });
+
+    const source = audioCtx.createMediaStreamSource(mediaStream);
+
+    // Create AudioWorklet for downsample + frame aggregation + RMS
+    const workletCode = `
+      class VoiceProcessor extends AudioWorkletProcessor {
+        constructor() {
+          super();
+          this.buffer = new Float32Array(1600); // 100ms @ 16kHz
+          this.bufIdx = 0;
+        }
+
+        process(inputs, outputs) {
+          const input = inputs[0];
+          if (!input || !input[0]) return true;
+
+          const samples = input[0];
+          const nativeRate = sampleRate;
+          const ratio = nativeRate / 16000;
+
+          // Downsample
+          for (let i = 0; i < samples.length; i++) {
+            if (i % Math.round(ratio) === 0) {
+              const s16 = Math.max(-1, Math.min(1, samples[i]));
+              this.buffer[this.bufIdx++] = s16;
+
+              if (this.bufIdx >= 1600) {
+                // Convert to 16-bit PCM
+                const pcm = new Int16Array(1600);
+                let rmsSum = 0;
+                for (let j = 0; j < 1600; j++) {
+                  const v = Math.max(-1, Math.min(1, this.buffer[j]));
+                  pcm[j] = v < 0 ? v * 0x8000 : v * 0x7FFF;
+                  rmsSum += v * v;
+                }
+                const rms = Math.sqrt(rmsSum / 1600);
+                this.port.postMessage({ pcm: pcm.buffer, rms });
+                this.bufIdx = 0;
+              }
+            }
+          }
+          return true;
+        }
+      }
+      registerProcessor('voice-processor', VoiceProcessor);
+    `;
+
+    const blob = new Blob([workletCode], { type: 'application/javascript' });
+    const url = URL.createObjectURL(blob);
+    await audioCtx.audioWorklet.addModule(url);
+    URL.revokeObjectURL(url);
+
+    workletNode = new AudioWorkletNode(audioCtx, 'voice-processor');
+
+    workletNode.port.onmessage = (event) => {
+      const { pcm, rms } = event.data;
+
+      // Update volume bar
+      const pct = Math.min(100, rms * 500);
+      volumeBar.style.width = `${pct}%`;
+
+      // Send PCM frame via WebSocket (closure captures currentWs)
+      if (currentWs.readyState === WebSocket.OPEN) {
+        currentWs.send(pcm);
+      }
+    };
+
+    source.connect(workletNode);
+    workletNode.connect(audioCtx.destination); // Needed for processing
+  }
+
+  // --- Stop Recording ---
+  function stop() {
+    log('[状态] 用户主动停止，userStopped → true', 'log-system');
+    userStopped = true;
+    setState(STATES.WAITING);
+
+    // Stop audio capture
+    if (workletNode) { workletNode.disconnect(); workletNode = null; }
+    if (mediaStream) { mediaStream.getTracks().forEach(t => t.stop()); mediaStream = null; }
+    if (audioCtx) { audioCtx.close().catch(() => {}); audioCtx = null; }
+    volumeBar.style.width = '0';
+
+    // Send 800ms silence frames (8 × 100ms = 8 frames of 3200 zero bytes = 1600 Int16 samples)
+    const silenceFrame = new ArrayBuffer(3200); // 1600 samples × 2 bytes
+    let sent = 0;
+    for (let i = 0; i < 8; i++) {
+      if (ws && ws.readyState === WebSocket.OPEN) {
+        ws.send(silenceFrame);
+        sent++;
+      }
+    }
+    log(`[状态] 已发送 ${sent}/8 静音补帧`, 'log-system');
+
+    // Plan A: 3s fallback — force close WebSocket if no done signal received
+    setTimeout(() => {
+      if (ws && ws.readyState === WebSocket.OPEN && userStopped) {
+        log('[状态] stop 后 3s 未收到 done，强制关闭 WebSocket', 'log-system');
+        ws.close();
+      }
+    }, 3000);
+  }
+
+  // --- TTS Playback ---
+  function playPcm(arrayBuffer) {
+    if (!audioCtx || audioCtx.state === 'closed') {
+      audioCtx = new AudioContext({ sampleRate: 24000 });
+    }
+
+    const pcm16 = new Int16Array(arrayBuffer);
+    const float32 = new Float32Array(pcm16.length);
+    for (let i = 0; i < pcm16.length; i++) {
+      float32[i] = pcm16[i] / (pcm16[i] < 0 ? 0x8000 : 0x7FFF);
+    }
+
+    const audioBuffer = audioCtx.createBuffer(1, float32.length, 24000);
+    audioBuffer.getChannelData(0).set(float32);
+
+    const source = audioCtx.createBufferSource();
+    source.buffer = audioBuffer;
+    source.connect(audioCtx.destination);
+
+    // Seamless playback: startAt = max(now, lastEnd)
+    const now = audioCtx.currentTime;
+    const startAt = Math.max(now, playbackTime);
+    source.start(startAt);
+    playbackTime = startAt + audioBuffer.duration;
+  }
+
+  // --- Button Handler ---
+  btn.addEventListener('click', () => {
+    switch (state) {
+      case STATES.IDLE:
+        start();
+        break;
+      case STATES.RECORDING:
+        stop();
+        break;
+    }
+  });
+
+  log('调试页已就绪，点击"开始录音"开始', 'log-system');
+})();
+</script>
+</body>
+</html>

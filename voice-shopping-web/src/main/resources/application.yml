@@ -68,6 +68,12 @@ voice-shopping:
   embedding:
     model: ${EMBEDDING_MODEL:text-embedding-v3}
     concurrency: ${EMBEDDING_CONCURRENCY:5}
+  voice:
+    asr:
+      model: ${VOICE_ASR_MODEL:paraformer-realtime-v2}
+    tts:
+      model: ${VOICE_TTS_MODEL:cosyvoice-v1}
+      voice: ${VOICE_TTS_VOICE:longwan}
 
 # Spring AI Alibaba
 spring-ai:

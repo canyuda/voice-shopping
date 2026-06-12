@@ -28,12 +28,13 @@ The project SHALL include `com.alibaba:dashscope-sdk-java:2.22.4` in the `voice-
 - **WHEN** `voice-shopping-ai` module is compiled
 - **THEN** DashScope SDK classes for text embedding are resolvable
 
-### Requirement: Alibaba NLS SDK for ASR and TTS
-The project SHALL include Alibaba NLS SDK dependencies in the `voice-shopping-ai` module for Paraformer ASR and CosyVoice TTS streaming.
+## REMOVED Requirements
 
-#### Scenario: NLS SDK classes are available
-- **WHEN** `voice-shopping-ai` module is compiled
-- **THEN** Alibaba NLS streaming client classes are resolvable
+### Requirement: Alibaba NLS SDK for ASR and TTS
+**Reason**: ASR/TTS 统一使用 DashScope SDK 内置的 `Recognition` + `SpeechSynthesizer`(ttsv2) API，NLS SDK 不再需要。
+**Migration**: 从 `voice-shopping-ai/pom.xml` 移除 `nls-sdk-common`、`nls-sdk-transcriber`、`nls-sdk-tts` 三个依赖。所有 ASR/TTS 功能通过 `dashscope-sdk-java` 提供。
+
+## ADDED Requirements
 
 ### Requirement: PostgreSQL and pgvector access
 The `voice-shopping-infrastructure` module SHALL include `spring-boot-starter-jdbc`, PostgreSQL driver, `com.pgvector:pgvector:0.1.6`, and `io.hypersistence:hypersistence-utils-hibernate-71:3.15.2` for database access with pgvector support.
