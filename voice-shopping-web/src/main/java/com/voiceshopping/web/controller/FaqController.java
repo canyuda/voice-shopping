@@ -1,5 +1,6 @@
 package com.voiceshopping.web.controller;
 
+import com.voiceshopping.common.dto.ApiResult;
 import com.voiceshopping.infrastructure.vector.EmbeddingService;
 import com.voiceshopping.infrastructure.vector.FaqSearchResult;
 import com.voiceshopping.infrastructure.vector.FaqVectorService;
@@ -7,7 +8,6 @@ import com.voiceshopping.web.dto.FaqAskDebugRequest;
 import com.voiceshopping.web.dto.FaqAskDebugResponse;
 import com.voiceshopping.web.dto.FaqAskRequest;
 import com.voiceshopping.web.dto.FaqAskResponse;
-import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
@@ -35,7 +35,7 @@ public class FaqController {
      * Find the best matching FAQ answer. Similarity threshold 0.75.
      */
     @PostMapping("/ask")
-    public ResponseEntity<FaqAskResponse> ask(@RequestBody FaqAskRequest request) {
+    public ApiResult<FaqAskResponse> ask(@RequestBody FaqAskRequest request) {
         long merchantId = request.merchantId() != null ? request.merchantId() : 0L;
         float[] queryVector = embeddingService.embed(request.question());
 
@@ -44,17 +44,18 @@ public class FaqController {
 
         if (result.isPresent()) {
             FaqSearchResult r = result.get();
-            return ResponseEntity.ok(new FaqAskResponse(
+            FaqAskResponse response = new FaqAskResponse(
                     true,
                     r.id(),
                     r.question(),
                     r.answer(),
                     r.category() != null ? r.category() : "",
                     r.similarity()
-            ));
+            );
+            return ApiResult.ok(response);
         }
 
-        return ResponseEntity.ok(FaqAskResponse.notFound());
+        return ApiResult.ok(FaqAskResponse.notFound());
     }
 
     /**
@@ -62,7 +63,7 @@ public class FaqController {
      * bypassing the 0.75 threshold. Useful for operations annotation.
      */
     @PostMapping("/ask-debug")
-    public ResponseEntity<FaqAskDebugResponse> askDebug(@RequestBody FaqAskDebugRequest request) {
+    public ApiResult<FaqAskDebugResponse> askDebug(@RequestBody FaqAskDebugRequest request) {
         float[] queryVector = embeddingService.embed(request.question());
 
         var results = faqVectorService.searchTopN(
@@ -77,6 +78,6 @@ public class FaqController {
                         r.similarity()))
                 .toList();
 
-        return ResponseEntity.ok(new FaqAskDebugResponse(items));
+        return ApiResult.ok(new FaqAskDebugResponse(items));
     }
 }

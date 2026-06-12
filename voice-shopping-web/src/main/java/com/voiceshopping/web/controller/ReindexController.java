@@ -1,9 +1,9 @@
 package com.voiceshopping.web.controller;
 
+import com.voiceshopping.common.dto.ApiResult;
 import com.voiceshopping.infrastructure.vector.ReindexResult;
 import com.voiceshopping.infrastructure.vector.ReindexService;
 import com.voiceshopping.web.dto.ReindexResponse;
-import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
@@ -25,18 +25,18 @@ public class ReindexController {
      * Trigger full product embedding reindex.
      */
     @PostMapping("/reindex")
-    public ResponseEntity<ReindexResponse> reindexProducts() {
+    public ApiResult<ReindexResponse> reindexProducts() {
         ReindexResult result = reindexService.reindexProducts();
-        return ResponseEntity.ok(toResponse(result));
+        return ApiResult.ok(toResponse(result));
     }
 
     /**
      * Trigger full FAQ embedding reindex.
      */
     @PostMapping("/faq-reindex")
-    public ResponseEntity<ReindexResponse> reindexFaqs() {
+    public ApiResult<ReindexResponse> reindexFaqs() {
         ReindexResult result = reindexService.reindexFaqs();
-        return ResponseEntity.ok(toResponse(result));
+        return ApiResult.ok(toResponse(result));
     }
 
     private static ReindexResponse toResponse(ReindexResult r) {

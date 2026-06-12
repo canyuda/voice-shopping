@@ -22,6 +22,13 @@ public final class RedisKeys {
         return SESSION_STATE + sessionId;
     }
 
+    /**
+     * Overload for UUID-based session IDs.
+     */
+    public static String sessionState(String sessionId) {
+        return SESSION_STATE + sessionId;
+    }
+
     // ------------------------------------------------------------------
     // Short-term memory: vs:short_memory:{sessionId}
     // Type: List | TTL: 30min | Source: session_message (PG)
@@ -30,6 +37,13 @@ public final class RedisKeys {
     private static final String SHORT_MEMORY = PREFIX + "short_memory:";
 
     public static String shortMemory(long sessionId) {
+        return SHORT_MEMORY + sessionId;
+    }
+
+    /**
+     * Overload for UUID-based session IDs.
+     */
+    public static String shortMemory(String sessionId) {
         return SHORT_MEMORY + sessionId;
     }
 

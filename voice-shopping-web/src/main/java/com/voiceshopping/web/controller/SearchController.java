@@ -2,11 +2,10 @@ package com.voiceshopping.web.controller;
 
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.voiceshopping.common.dto.ApiResult;
 import com.voiceshopping.infrastructure.vector.EmbeddingService;
-import com.voiceshopping.infrastructure.vector.ProductSearchResult;
 import com.voiceshopping.infrastructure.vector.ProductVectorService;
 import com.voiceshopping.web.dto.SearchResponse;
-import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
@@ -35,7 +34,7 @@ public class SearchController {
     }
 
     @GetMapping("/search")
-    public ResponseEntity<SearchResponse> search(
+    public ApiResult<SearchResponse> search(
             @RequestParam String q,
             @RequestParam(defaultValue = "1") long merchantId,
             @RequestParam(defaultValue = "5") int topK,
@@ -59,7 +58,7 @@ public class SearchController {
                         r.similarity()))
                 .toList();
 
-        return ResponseEntity.ok(new SearchResponse(q, items.size(), items));
+        return ApiResult.ok(new SearchResponse(q, items.size(), items));
     }
 
     private Map<String, Object> parseAttributes(String attributes) {
