@@ -48,6 +48,18 @@
             <artifactId>pgvector</artifactId>
         </dependency>
 
+        <!-- DashScope SDK (for text-embedding-v3) -->
+        <dependency>
+            <groupId>com.alibaba</groupId>
+            <artifactId>dashscope-sdk-java</artifactId>
+            <exclusions>
+                <exclusion>
+                    <groupId>org.slf4j</groupId>
+                    <artifactId>slf4j-simple</artifactId>
+                </exclusion>
+            </exclusions>
+        </dependency>
+
         <!-- Hypersistence Utils -->
         <dependency>
             <groupId>io.hypersistence</groupId>
@@ -60,10 +72,10 @@
             <artifactId>mybatis-plus-spring-boot3-starter</artifactId>
         </dependency>
 
-        <!-- Flyway -->
+        <!-- Flyway — Spring Boot 4 requires the starter for auto-configuration -->
         <dependency>
-            <groupId>org.flywaydb</groupId>
-            <artifactId>flyway-core</artifactId>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-flyway</artifactId>
         </dependency>
         <dependency>
             <groupId>org.flywaydb</groupId>

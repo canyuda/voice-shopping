@@ -29,7 +29,7 @@
 | 列名 | 类型 | 可空 | 默认值 | 约束 | 说明 |
 |------|------|------|--------|------|------|
 | id | BIGSERIAL | 否 | 自增 | 主键 | |
-| merchant_id | BIGINT | 否 | | 外键 → merchant(id) | 租户隔离 |
+| merchant_id | BIGINT | 否 | | 关联 merchant | 租户隔离 |
 | external_id | VARCHAR(100) | 是 | | | 外部系统用户ID |
 | nickname | VARCHAR(100) | 是 | | | 昵称 |
 | phone | VARCHAR(20) | 是 | | | 手机号 |
@@ -55,7 +55,7 @@
 | 列名 | 类型 | 可空 | 默认值 | 约束 | 说明 |
 |------|------|------|--------|------|------|
 | id | BIGSERIAL | 否 | 自增 | 主键 | |
-| merchant_id | BIGINT | 否 | | 外键 → merchant(id) | 租户隔离 |
+| merchant_id | BIGINT | 否 | | 关联 merchant | 租户隔离 |
 | sku_code | VARCHAR(64) | 是 | | | 商家自定义SKU编码 |
 | name | VARCHAR(500) | 否 | | | 商品名 |
 | category_l1 | VARCHAR(100) | 否 | | | 一级品类（鞋、服、电子等） |
@@ -97,7 +97,7 @@
 | 列名 | 类型 | 可空 | 默认值 | 约束 | 说明 |
 |------|------|------|--------|------|------|
 | id | BIGSERIAL | 否 | 自增 | 主键 | |
-| merchant_id | BIGINT | 否 | | 外键 → merchant(id) | 0=平台通用FAQ（配送、售后），>0=商家私有。检索用 `merchant_id IN (0, :currentMerchant)` |
+| merchant_id | BIGINT | 否 | | 关联 merchant | 0=平台通用FAQ（配送、售后），>0=商家私有。检索用 `merchant_id IN (0, :currentMerchant)` |
 | question | TEXT | 否 | | | 问题 |
 | answer | TEXT | 否 | | | 答案 |
 | category | VARCHAR(100) | 是 | | | FAQ分类（物流、退换、支付等） |
@@ -131,8 +131,8 @@
 | 列名 | 类型 | 可空 | 默认值 | 约束 | 说明 |
 |------|------|------|--------|------|------|
 | id | BIGSERIAL | 否 | 自增 | 主键 | |
-| user_id | BIGINT | 否 | | 外键 → app_user(id), UNIQUE | 与用户 1:1 |
-| merchant_id | BIGINT | 否 | | 外键 → merchant(id) | 租户隔离 |
+| user_id | BIGINT | 否 | | 关联 app_user, UNIQUE | 与用户 1:1 |
+| merchant_id | BIGINT | 否 | | 关联 merchant | 租户隔离 |
 | gender | VARCHAR(10) | 是 | | CHECK IN (MALE/FEMALE/OTHER/UNSPECIFIED) | 性别 |
 | age_range | VARCHAR(10) | 是 | | CHECK IN (18-24/25-34/35-44/45-54/55-64/65+) | 年龄段 |
 | city | VARCHAR(100) | 是 | | | 城市 |
@@ -154,8 +154,8 @@
 | 列名 | 类型 | 可空 | 默认值 | 约束 | 说明 |
 |------|------|------|--------|------|------|
 | id | BIGSERIAL | 否 | 自增 | 主键 | |
-| user_id | BIGINT | 否 | | 外键 → app_user(id), UNIQUE | 与用户 1:1 |
-| merchant_id | BIGINT | 否 | | 外键 → merchant(id) | 租户隔离 |
+| user_id | BIGINT | 否 | | 关联 app_user, UNIQUE | 与用户 1:1 |
+| merchant_id | BIGINT | 否 | | 关联 merchant | 租户隔离 |
 | category_prefs | JSONB | 否 | '{}' | | 品类偏好评分，如 `{"跑鞋":0.9,"篮球鞋":0.7}` |
 | brand_prefs | JSONB | 否 | '{}' | | 品牌偏好评分，如 `{"Nike":0.8,"Asics":0.9}` |
 | price_sensitivity | VARCHAR(10) | 是 | 'MEDIUM' | CHECK IN (LOW/MEDIUM/HIGH) | 价格敏感度 |
@@ -176,12 +176,12 @@
 | 列名 | 类型 | 可空 | 默认值 | 约束 | 说明 |
 |------|------|------|--------|------|------|
 | id | UUID | 否 | gen_random_uuid() | 主键 | |
-| merchant_id | BIGINT | 是 | | 外键 → merchant(id) | 租户隔离（平台入口可为 NULL，商家入口必填） |
-| user_id | BIGINT | 否 | | 外键 → app_user(id) | 发起用户 |
+| merchant_id | BIGINT | 是 | | 关联 merchant | 租户隔离（平台入口可为 NULL，商家入口必填） |
+| user_id | BIGINT | 否 | | 关联 app_user | 发起用户 |
 | channel | VARCHAR(25) | 否 | 'HOME_ENTRY' | CHECK IN (HOME_ENTRY/PRODUCT_PAGE/SEARCH_FALLBACK) | 入口场景 |
 | outcome | VARCHAR(20) | 是 | | CHECK IN (RECOMMENDATION/ORDER/FAQ_ANSWERED/CHITCHAT/FOLLOWUP/ABANDONED/ERROR) | 会话结局 |
 | total_tokens | INT | 否 | 0 | | 消耗 LLM token 数，用于成本统计 |
-| bound_product_id | BIGINT | 是 | | 外键 → product(id) | 入口绑定的商品（PRODUCT_PAGE 场景） |
+| bound_product_id | BIGINT | 是 | | 关联 product | 入口绑定的商品（PRODUCT_PAGE 场景） |
 | started_at | TIMESTAMPTZ | 否 | now() | | 开始时间 |
 | ended_at | TIMESTAMPTZ | 是 | | | 结束时间 |
 | created_at | TIMESTAMPTZ | 否 | now() | | 创建时间 |
@@ -194,8 +194,8 @@
 | 列名 | 类型 | 可空 | 默认值 | 约束 | 说明 |
 |------|------|------|--------|------|------|
 | id | BIGSERIAL | 否 | 自增 | 主键 | |
-| session_id | UUID | 否 | | 外键 → session(id) ON DELETE CASCADE | 所属会话 |
-| merchant_id | BIGINT | 否 | | 外键 → merchant(id) | 租户隔离 |
+| session_id | UUID | 否 | | 关联 session | 所属会话 |
+| merchant_id | BIGINT | 否 | | 关联 merchant | 租户隔离 |
 | role | VARCHAR(16) | 否 | | CHECK IN (USER/ASSISTANT/SYSTEM) | 角色 |
 | turn | INT | 否 | | | 对话轮次编号（从1开始递增） |
 | agent_name | VARCHAR(32) | 是 | | | 生成此消息的 Agent（IntentAgent/ClarifyAgent/RecAgent/SentimentAgent） |
@@ -212,8 +212,8 @@
 
 | 列名 | 类型 | 可空 | 默认值 | 约束 | 说明 |
 |------|------|------|--------|------|------|
-| id | UUID | 否 | | 主键 + 外键 → session(id) ON DELETE CASCADE | 与 session 1:1 共享主键 |
-| merchant_id | BIGINT | 否 | | 外键 → merchant(id) | 租户隔离 |
+| id | UUID | 否 | | 主键, 关联 session | 与 session 1:1 共享主键 |
+| merchant_id | BIGINT | 否 | | 关联 merchant | 租户隔离 |
 | phase | VARCHAR(32) | 否 | 'IDLE' | CHECK IN (IDLE/INTENT_PARSED/CLARIFYING/READY_TO_RECOMMEND/GENERATING_SPEECH/ORDER_CONFIRMING) | 状态机阶段 |
 | current_intent | VARCHAR(32) | 是 | | | 当前识别的意图 |
 | slots | JSONB | 否 | '{}' | | 累积槽位，如 `{"category":"跑鞋","budget":500}` |
@@ -230,9 +230,9 @@
 | 列名 | 类型 | 可空 | 默认值 | 约束 | 说明 |
 |------|------|------|--------|------|------|
 | id | BIGSERIAL | 否 | 自增 | 主键 | |
-| merchant_id | BIGINT | 否 | | 外键 → merchant(id) | 租户隔离 |
-| user_id | BIGINT | 否 | | 外键 → app_user(id) | 下单用户 |
-| session_id | UUID | 是 | | 外键 → session(id) | 关联会话 |
+| merchant_id | BIGINT | 否 | | 关联 merchant | 租户隔离 |
+| user_id | BIGINT | 否 | | 关联 app_user | 下单用户 |
+| session_id | UUID | 是 | | 关联 session | 关联会话 |
 | order_no | VARCHAR(64) | 否 | | 商户内唯一 | 业务订单号 |
 | items | JSONB | 否 | | | 商品列表快照 |
 | total_amount | NUMERIC(12,2) | 否 | | CHECK >= 0 | 总金额（人民币） |
