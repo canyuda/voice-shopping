@@ -75,6 +75,11 @@ voice-shopping:
       model: ${VOICE_TTS_MODEL:cosyvoice-v1}
       voice: ${VOICE_TTS_VOICE:longwan}
 
+logging:
+  level:
+    com.voiceshopping.business.agent: DEBUG
+    io.agentscope: DEBUG
+
 # Spring AI Alibaba
 spring-ai:
   dashscope:

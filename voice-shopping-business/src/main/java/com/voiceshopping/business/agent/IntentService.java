@@ -69,6 +69,8 @@ public class IntentService {
         // Clear previous turn's conversation history — intent is stateless
         agent.getMemory().clear();
 
+        log.info("[IntentAgent] LLM request for session={}:\n{}", sessionId, userInput);
+
         Msg response = agent.call(
                 Msg.builder()
                         .role(MsgRole.USER)
@@ -82,7 +84,7 @@ public class IntentService {
         }
 
         String rawText = response.getTextContent();
-        log.debug("Intent agent raw response for session={}: {}", sessionId, rawText);
+        log.info("[IntentAgent] LLM response for session={}: {}", sessionId, rawText);
 
         IntentResult result = parseIntent(rawText);
 
