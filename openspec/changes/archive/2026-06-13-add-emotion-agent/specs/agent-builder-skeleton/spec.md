@@ -1,8 +1,4 @@
-## Purpose
-
-Agent Builder 的包结构和 Prompt 模板文件骨架。IntentAgentBuilder 已完整实现，其余为占位。
-
-## Requirements
+## MODIFIED Requirements
 
 ### Requirement: Agent Builder 类结构
 

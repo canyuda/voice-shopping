@@ -7,6 +7,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.event.EventListener;
+import org.springframework.scheduling.annotation.Async;
 import org.springframework.stereotype.Component;
 
 import java.math.BigDecimal;
@@ -46,6 +47,7 @@ public class UserBehaviorSink {
         log.info("UserBehaviorSink initialized: viewWeight={}, purchaseWeight={}", viewWeight, purchaseWeight);
     }
 
+    @Async
     @EventListener
     public void onViewed(UserViewedEvent event) {
         log.debug("Processing view event: userId={}, category={}, brand={}",
@@ -60,7 +62,7 @@ public class UserBehaviorSink {
         profileService.evictCache(event.getUserId());
         log.debug("View event processed for userId={}", event.getUserId());
     }
-
+    @Async
     @EventListener
     public void onPurchased(UserPurchasedEvent event) {
         log.debug("Processing purchase event: userId={}, category={}, brand={}, amount={}",
