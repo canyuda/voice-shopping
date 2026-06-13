@@ -1,10 +1,4 @@
-# agent-builder-skeleton
-
-## Purpose
-
-Agent Builder 的包结构和 Prompt 模板文件骨架。所有 5 个 Builder（含 PerspectiveAgentBuilder）已完整实现，Prompt 模板文件已全部填充。
-
-## Requirements
+## MODIFIED Requirements
 
 ### Requirement: Agent Builder 类结构
 

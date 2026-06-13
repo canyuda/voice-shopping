@@ -1,10 +1,36 @@
-# rec-orchestration
+## ADDED Requirements
 
-## Purpose
+### Requirement: ParallelRecommendService 并行实现
+系统 SHALL 在 `com.voiceshopping.business.rec` 包下提供 `ParallelRecommendService`，提供与 `RecommendOrchestrator.recommend` **结果等价**的实现，但用 `CompletableFuture` 并行执行 profile 加载与候选召回链。
 
-Recommendation pipeline orchestration capability: RecommendOrchestrator chains profile load → query build → embed → filter → candidate retrieval → fallback → rerank → top 3 → reason generation, plus RecommendDebugController for manual testing. ParallelRecommendService 提供基于 `CompletableFuture` 的并行等价实现。
+约束：
+1. 方法签名 MUST 与 `RecommendOrchestrator.recommend` 完全一致：`RecommendResult recommend(String sessionId, Long userId, String utterance, Map<String, Object> slots)`。
+2. MUST 使用 `CompletableFuture.supplyAsync` 并行启动两条腿：
+   - **Profile 腿**：`userId != null ? profileService.load(userId) : null`，仅依赖 `userId`。
+   - **Candidates 腿**：`buildQuery → embeddingService.embed → buildFilter → retrieveWithFallback`，仅依赖 `utterance + slots`。
+3. 候选召回 MUST 复用与 `RecommendOrchestrator` **同一份** fallback 实现（即 `RecommendCandidateRetriever.retrieve`），保证两级 fallback 语义（预算 +30% / 去 categoryL2）一致。
+4. MUST 用 `thenCombine` 合流后串行执行：rerank → 取 Top 3 → `attachReasons`。
+5. 候选为空时 MUST 返回 `RecommendResult.EMPTY`，与 `RecommendOrchestrator` 一致。
+6. 任一腿抛出异常 MUST fail-fast 向上抛出 `IllegalStateException`（包装原异常）。
+7. `RecommendOrchestrator` 类的**外部行为** MUST NOT 改变；本能力可借助提取协作类（如 `RecommendCandidateRetriever`）让两者复用 fallback，但 `RecommendOrchestrator.recommend` 的方法签名、返回值、异常语义、空结果行为 MUST 保持完全等价。
 
-## Requirements
+#### Scenario: 与串行版本结果等价
+- **WHEN** 同一组 (sessionId, userId, utterance, slots) 同时传给 `RecommendOrchestrator.recommend` 与 `ParallelRecommendService.recommend`
+- **THEN** 两者返回的 `RecommendResult.items()` 中商品 productId 集合相同、顺序相同、`explanationTone` 相同（reasons 文本因 LLM 不确定可能不同，不强求逐字相等）
+
+#### Scenario: profile 腿失败 fail-fast
+- **WHEN** `profileService.load` 抛 RuntimeException
+- **THEN** `ParallelRecommendService.recommend` 抛 `IllegalStateException`（不静默吞掉异常，符合全局 fail-fast 规范）
+
+#### Scenario: 全部 fallback 失败返回空结果
+- **WHEN** 初始召回、预算放宽、去 categoryL2 三次均返回空
+- **THEN** 方法返回 `RecommendResult.EMPTY`，与 `RecommendOrchestrator` 行为一致
+
+#### Scenario: userId 为 null 不加载 profile
+- **WHEN** 传入 `userId=null`
+- **THEN** profile 腿直接返回 null 而非调用 `profileService.load`，候选腿正常并行执行
+
+## MODIFIED Requirements
 
 ### Requirement: RecommendOrchestrator 全流程编排
 系统 SHALL 在 `com.voiceshopping.business.rec` 包下提供 `RecommendOrchestrator`，实现 `RecommendResult recommend(String sessionId, Long userId, String utterance, Map<String, Object> slots)` 方法，串联完整推荐流程。
@@ -76,33 +102,3 @@ Recommendation pipeline orchestration capability: RecommendOrchestrator chains p
 #### Scenario: 参数校验失败
 - **WHEN** 任一接口传入空 utterance
 - **THEN** 返回 400 错误
-
-### Requirement: ParallelRecommendService 并行实现
-系统 SHALL 在 `com.voiceshopping.business.rec` 包下提供 `ParallelRecommendService`，提供与 `RecommendOrchestrator.recommend` **结果等价**的实现，但用 `CompletableFuture` 并行执行 profile 加载与候选召回链。
-
-约束：
-1. 方法签名 MUST 与 `RecommendOrchestrator.recommend` 完全一致：`RecommendResult recommend(String sessionId, Long userId, String utterance, Map<String, Object> slots)`。
-2. MUST 使用 `CompletableFuture.supplyAsync` 并行启动两条腿：
-   - **Profile 腿**：`userId != null ? profileService.load(userId) : null`，仅依赖 `userId`。
-   - **Candidates 腿**：`buildQuery → embeddingService.embed → buildFilter → retrieveWithFallback`，仅依赖 `utterance + slots`。
-3. 候选召回 MUST 复用与 `RecommendOrchestrator` **同一份** fallback 实现（即 `RecommendCandidateRetriever.retrieve`），保证两级 fallback 语义（预算 +30% / 去 categoryL2）一致。
-4. MUST 用 `thenCombine` 合流后串行执行：rerank → 取 Top 3 → `attachReasons`。
-5. 候选为空时 MUST 返回 `RecommendResult.EMPTY`，与 `RecommendOrchestrator` 一致。
-6. 任一腿抛出异常 MUST fail-fast 向上抛出 `IllegalStateException`（包装原异常）。
-7. `RecommendOrchestrator` 类的**外部行为** MUST NOT 改变；本能力可借助提取协作类（如 `RecommendCandidateRetriever`）让两者复用 fallback，但 `RecommendOrchestrator.recommend` 的方法签名、返回值、异常语义、空结果行为 MUST 保持完全等价。
-
-#### Scenario: 与串行版本结果等价
-- **WHEN** 同一组 (sessionId, userId, utterance, slots) 同时传给 `RecommendOrchestrator.recommend` 与 `ParallelRecommendService.recommend`
-- **THEN** 两者返回的 `RecommendResult.items()` 中商品 productId 集合相同、顺序相同、`explanationTone` 相同（reasons 文本因 LLM 不确定可能不同，不强求逐字相等）
-
-#### Scenario: profile 腿失败 fail-fast
-- **WHEN** `profileService.load` 抛 RuntimeException
-- **THEN** `ParallelRecommendService.recommend` 抛 `IllegalStateException`（不静默吞掉异常，符合全局 fail-fast 规范）
-
-#### Scenario: 全部 fallback 失败返回空结果
-- **WHEN** 初始召回、预算放宽、去 categoryL2 三次均返回空
-- **THEN** 方法返回 `RecommendResult.EMPTY`，与 `RecommendOrchestrator` 行为一致
-
-#### Scenario: userId 为 null 不加载 profile
-- **WHEN** 传入 `userId=null`
-- **THEN** profile 腿直接返回 null 而非调用 `profileService.load`，候选腿正常并行执行
