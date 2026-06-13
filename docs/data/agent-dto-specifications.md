@@ -113,7 +113,7 @@ public record RecommendedItem(long productId, String name, BigDecimal price, ...
 | 字段 | 类型 | 说明 |
 |------|------|------|
 | items | List<RecommendedItem> | 推荐商品列表（已按 matchScore 排序） |
-| explanationTone | String | 话术风格标记（professional / casual / caring），传给 SentimentAgent |
+| explanationTone | String | 话术风格标记（professional / casual / caring），传给 EmotionAgent |
 
 **示例：**
 ```json
@@ -127,7 +127,7 @@ public record RecommendedItem(long productId, String name, BigDecimal price, ...
 
 ## 6. EmotionResult — 情感应答输出
 
-**定义位置：** SentimentAgent 输出
+**定义位置：** EmotionAgent 输出
 
 | 字段 | 类型 | 说明 |
 |------|------|------|
@@ -188,7 +188,7 @@ ClarifyAgent →  ClarifyResult(action, questionToAsk, missingSlots)
                     ↓
 RecAgent     →  RecommendResult(items<RecommendedItem>, explanationTone)
                     ↓
-SentimentAgent → EmotionResult(speechText, displayBlocks)
+EmotionAgent → EmotionResult(speechText, displayBlocks)
 ```
 
 所有 Agent 可通过 `UserProfileSnapshot` 获取用户画像做个性化。

@@ -18,7 +18,7 @@ import java.util.List;
  * Redis List-based short-term conversation memory per session.
  * <p>
  * Stores the most recent dialogue turns for context retrieval by Agents:
- * IntentAgent reads recent 3, SentimentAgent reads recent 2.
+ * IntentAgent reads recent 3, EmotionAgent reads recent 2.
  * Orchestrator appends each turn result.
  */
 @Component

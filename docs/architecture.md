@@ -63,7 +63,7 @@
 │  │ Stream  │────────┼───▶│  IntentAgent        │                     │
 │  │         │        │    │  ClarifyAgent       │                     │
 │  │         │        │    │  RecAgent           │                     │
-│  │         │        │    │  SentimentAgent     │                     │
+│  │         │        │    │  EmotionAgent     │                     │
 │  │         │        │    └──────────┬──────────┘                     │
 │  │         │        │               │                                │
 └──┼─────────┼────────┼───────────────┼────────────────────────────────┘
@@ -89,7 +89,7 @@
          → MsgHub 派发给对应 Agent
          → Agent 读 PostgreSQL/pgvector/Redis
          → 结果回 Orchestrator
-         → SentimentAgent 包装(口语化话术 + 展示卡片)
+         → EmotionAgent 包装(口语化话术 + 展示卡片)
          → TTS(CosyVoice) 流式合成(PCM)
          → WebSocket 下行(PCM binary frame)
          → 用户耳朵
@@ -166,12 +166,12 @@ web → business → ai → infrastructure → common
     │               │                  │ (ASK → loop)        │
     │               │                  └─────────────────────┘
     │               │
-    │               ├── PRODUCT_RECOMMENDATION ──▶ ClarifyAgent → RecAgent → SentimentAgent
-    │               ├── PRODUCT_COMPARE ─────────────────────────▶ RecAgent → SentimentAgent
+    │               ├── PRODUCT_RECOMMENDATION ──▶ ClarifyAgent → RecAgent → EmotionAgent
+    │               ├── PRODUCT_COMPARE ─────────────────────────▶ RecAgent → EmotionAgent
     │               ├── CLARIFY_NEEDED ──────────────────────────▶ ClarifyAgent (loop)
     │               ├── ORDER_CONFIRM ──────────────────────────────────────▶ Order Flow
-    │               ├── CHITCHAT ──────────────────────────────▶ SentimentAgent
-    │               └── OUT_OF_SCOPE ─────────────────────────▶ SentimentAgent (polite decline)
+    │               ├── CHITCHAT ──────────────────────────────▶ EmotionAgent
+    │               └── OUT_OF_SCOPE ─────────────────────────▶ EmotionAgent (polite decline)
     │
     └── GENERATING_SPEECH (TTS streaming) ──────────────────────┘
 ```
@@ -183,7 +183,7 @@ web → business → ai → infrastructure → common
 | **IntentAgent** | 意图理解 | qwen-turbo | userId, sessionId, utterance, recentHistory | intent, slots, confidence |
 | **ClarifyAgent** | 需求澄清（规则优先，LLM 兜底） | qwen-turbo | slots, category | action(ASK/READY), questionToAsk |
 | **RecAgent** | 商品推荐 | qwen-turbo | slots, userProfile | recommendations[], matchScore |
-| **SentimentAgent** | 情感问答 | qwen-max | recommendations, userUtterance, sessionMood | speechText, displayBlocks[] |
+| **EmotionAgent** | 情感问答 | qwen-max | recommendations, userUtterance, sessionMood | speechText, displayBlocks[] |
 
 **意图枚举：** `PRODUCT_RECOMMENDATION` / `CLARIFY_NEEDED` / `PRODUCT_COMPARE` / `CHITCHAT` / `ORDER_CONFIRM` / `OUT_OF_SCOPE`
 
@@ -210,7 +210,7 @@ web → business → ai → infrastructure → common
    输入: { slots: {...}, userProfile: { height: 180, weight: 75 } }
    输出: { recommendations: [{ productId: 8821, name: "Asics GEL-Contend 9", price: 479, ... }] }
 
-6. SentimentAgent:
+6. EmotionAgent:
    输入: { recommendations: [...], userUtterance: "我想买双跑鞋", sessionMood: "neutral" }
    输出: { speechText: "好，给你挑了三款缓震很出色的……", displayBlocks: [...] }
 ```

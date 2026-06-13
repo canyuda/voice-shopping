@@ -12,7 +12,7 @@ AgentSet SHALL 包含 4 个 Agent 实例：
 - IntentAgent（意图理解）
 - ClarifyAgent（需求澄清）
 - RecAgent（商品推荐）
-- SentimentAgent（情感应答）
+- EmotionAgent（情感应答）
 
 AgentFactory SHALL 支持会话结束时主动移除缓存条目，释放 Agent 持有的 InMemoryMemory 内存。
 

@@ -79,12 +79,12 @@ Orchestrator 状态机: IDLE → INTENT_PARSED → CLARIFYING → READY_TO_RECOM
 ```
 
 意图分支路由：
-- `PRODUCT_RECOMMENDATION` → ClarifyAgent → RecAgent → SentimentAgent
-- `PRODUCT_COMPARE` → RecAgent → SentimentAgent
+- `PRODUCT_RECOMMENDATION` → ClarifyAgent → RecAgent → EmotionAgent
+- `PRODUCT_COMPARE` → RecAgent → EmotionAgent
 - `CLARIFY_NEEDED` → ClarifyAgent（循环直到 READY）
 - `ORDER_CONFIRM` → 订单流程
-- `CHITCHAT` → SentimentAgent 直接应答
-- `OUT_OF_SCOPE` → SentimentAgent 礼貌拒绝
+- `CHITCHAT` → EmotionAgent 直接应答
+- `OUT_OF_SCOPE` → EmotionAgent 礼貌拒绝
 
 ## Redis Key 规范
 

@@ -13,7 +13,7 @@ Agent Builder 的包结构和 Prompt 模板文件骨架。IntentAgentBuilder 已
 | `agent.intent.IntentAgentBuilder` | ✅ 已实现（qwen-turbo + InMemoryMemory + intent.txt） |
 | `agent.clarify.ClarifyAgentBuilder` | ✅ 已实现（qwen-turbo + InMemoryMemory + clarify.txt） |
 | `agent.rec.RecAgentBuilder` | ✅ 已实现（qwen-max + InMemoryMemory + rec.txt） |
-| `agent.sentiment.SentimentAgentBuilder` | TODO — 暂返回 null |
+| `agent.emotion.EmotionAgentBuilder` | TODO — 暂返回 null |
 | `agent.perspective.PerspectiveAgentBuilder` | TODO — `build(name, sysPrompt)` 暂返回 null |
 
 #### Scenario: 文件存在性检查
@@ -29,7 +29,7 @@ Agent Builder 的包结构和 Prompt 模板文件骨架。IntentAgentBuilder 已
 | `intent.txt` | ✅ 已填充（意图识别 prompt） |
 | `clarify.txt` | ✅ 已填充（澄清追问 prompt） |
 | `rec.txt` | ✅ 已填充（推荐理由生成 prompt） |
-| `sentiment.txt` | TODO |
+| `emotion.txt` | TODO |
 | `perspective/perspective_price.txt` | TODO |
 | `perspective/perspective_pro.txt` | TODO |
 | `perspective/perspective_beginner.txt` | TODO |

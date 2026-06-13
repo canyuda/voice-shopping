@@ -198,7 +198,7 @@
 | merchant_id | BIGINT | 否 | | 关联 merchant | 租户隔离 |
 | role | VARCHAR(16) | 否 | | CHECK IN (USER/ASSISTANT/SYSTEM) | 角色 |
 | turn | INT | 否 | | | 对话轮次编号（从1开始递增） |
-| agent_name | VARCHAR(32) | 是 | | | 生成此消息的 Agent（IntentAgent/ClarifyAgent/RecAgent/SentimentAgent） |
+| agent_name | VARCHAR(32) | 是 | | | 生成此消息的 Agent（IntentAgent/ClarifyAgent/RecAgent/EmotionAgent） |
 | content | TEXT | 否 | | | 消息文本内容 |
 | content_audio_url | VARCHAR(500) | 是 | | | TTS 生成的音频文件 URL |
 | intent | VARCHAR(32) | 是 | | | 该轮识别的意图 |

@@ -2,7 +2,7 @@
 
 ## 1. 标准导购链路
 
-**场景：** 用户发起商品推荐请求，走完 IntentAgent → ClarifyAgent → RecAgent → SentimentAgent 全链路。
+**场景：** 用户发起商品推荐请求，走完 IntentAgent → ClarifyAgent → RecAgent → EmotionAgent 全链路。
 
 | 步骤 | 操作 | 预期 |
 |------|------|------|
@@ -12,13 +12,13 @@
 | 4 | ClarifyAgent 判断槽位 | `{action: ASK, questionToAsk: "平时跑什么路面？", missingSlots: ["scenario"]}` |
 | 5 | 用户回答："塑胶跑道" | ClarifyAgent 返回 `{action: READY}` |
 | 6 | RecAgent 推荐 | 返回 2-3 个商品，如 HOKA Clifton 9、Nike Pegasus 40，matchScore 均 > 0.7 |
-| 7 | SentimentAgent 包装口播 | speechText 包含推荐理由，displayBlocks 包含商品卡片 |
+| 7 | EmotionAgent 包装口播 | speechText 包含推荐理由，displayBlocks 包含商品卡片 |
 
 **断言要点：**
 - IntentAgent confidence ≥ 0.8
 - ClarifyAgent 至少追问一轮
 - RecAgent 返回商品均在 budget 范围内
-- SentimentAgent speechText 非空且包含推荐商品名
+- EmotionAgent speechText 非空且包含推荐商品名
 
 ---
 
@@ -52,7 +52,7 @@
 | 步骤 | 操作 | 预期 |
 |------|------|------|
 | 1 | 用户问："帮我写一份周报" | IntentAgent 返回 `{intent: OUT_OF_SCOPE, confidence ≥ 0.8}` |
-| 2 | SentimentAgent 生成拒绝话术 | speechText 包含礼貌拒绝（如"我主要帮你选购商品，写周报这件事暂时帮不上忙"） |
+| 2 | EmotionAgent 生成拒绝话术 | speechText 包含礼貌拒绝（如"我主要帮你选购商品，写周报这件事暂时帮不上忙"） |
 | 3 | displayBlocks 为空 | 不展示任何商品卡片 |
 
 **断言要点：**

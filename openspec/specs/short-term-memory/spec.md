@@ -41,8 +41,8 @@ The system SHALL provide a `recent(sessionId, n)` method that returns the most r
 - **WHEN** IntentAgent calls `recent(sessionId, 3)` before processing a new user utterance
 - **THEN** it receives the last 3 Turns (regardless of role/agent) to use as conversation context
 
-#### Scenario: SentimentAgent reads recent 2 turns for mood trend
-- **WHEN** SentimentAgent calls `recent(sessionId, 2)` before generating an emotional response
+#### Scenario: EmotionAgent reads recent 2 turns for mood trend
+- **WHEN** EmotionAgent calls `recent(sessionId, 2)` before generating an emotional response
 - **THEN** it receives the last 2 Turns to assess user mood trajectory
 
 #### Scenario: Orchestrator appends each turn result

@@ -3,7 +3,7 @@
 -- Session: a1b2c3d4-e5f6-7890-abcd-ef1234567890
 -- Key pattern: vs:short_memory:{sessionId}
 -- Simulates a recommendation flow:
---   USER asks → IntentAgent → ClarifyAgent → USER answers → RecAgent → SentimentAgent
+--   USER asks → IntentAgent → ClarifyAgent → USER answers → RecAgent → EmotionAgent
 -- ============================================================
 
 -- Reset (clear old data)
@@ -27,8 +27,8 @@ RPUSH vs:short_memory:a1b2c3d4-e5f6-7890-abcd-ef1234567890 '{"role":"ASSISTANT",
 -- Turn 6: RecAgent returns recommendations
 RPUSH vs:short_memory:a1b2c3d4-e5f6-7890-abcd-ef1234567890 '{"role":"ASSISTANT","content":"RecommendResult: items=[Asics GEL-Contend 9(479,0.88), HOKA Clifton 9(899,0.72)], tone=professional","turn":6,"agent":"RecAgent","timestamp":"2026-06-12T10:00:20Z"}'
 
--- Turn 7: SentimentAgent generates speech
-RPUSH vs:short_memory:a1b2c3d4-e5f6-7890-abcd-ef1234567890 '{"role":"ASSISTANT","content":"好，考虑到你膝盖不太好又跑水泥路，给你挑了两款缓震很出色的。先说第一款，Asics GEL-Contend 9，479块，GEL缓震胶加宽鞋楦，对膝盖非常友好，而且刚好在你预算内。","turn":7,"agent":"SentimentAgent","timestamp":"2026-06-12T10:00:22Z"}'
+-- Turn 7: EmotionAgent generates speech
+RPUSH vs:short_memory:a1b2c3d4-e5f6-7890-abcd-ef1234567890 '{"role":"ASSISTANT","content":"好，考虑到你膝盖不太好又跑水泥路，给你挑了两款缓震很出色的。先说第一款，Asics GEL-Contend 9，479块，GEL缓震胶加宽鞋楦，对膝盖非常友好，而且刚好在你预算内。","turn":7,"agent":"EmotionAgent","timestamp":"2026-06-12T10:00:22Z"}'
 
 -- Turn 8: USER asks for more details
 RPUSH vs:short_memory:a1b2c3d4-e5f6-7890-abcd-ef1234567890 '{"role":"USER","content":"第二款呢？那个HOKA怎么样","turn":8,"agent":null,"timestamp":"2026-06-12T10:00:35Z"}'
@@ -36,8 +36,8 @@ RPUSH vs:short_memory:a1b2c3d4-e5f6-7890-abcd-ef1234567890 '{"role":"USER","cont
 -- Turn 9: RecAgent context-aware follow-up
 RPUSH vs:short_memory:a1b2c3d4-e5f6-7890-abcd-ef1234567890 '{"role":"ASSISTANT","content":"RecommendResult: context=follow-up on HOKA, HOKA Clifton 9 超出预算(899>500) but top cushion","turn":9,"agent":"RecAgent","timestamp":"2026-06-12T10:00:37Z"}'
 
--- Turn 10: SentimentAgent explains trade-off
-RPUSH vs:short_memory:a1b2c3d4-e5f6-7890-abcd-ef1234567890 '{"role":"ASSISTANT","content":"第二款HOKA Clifton 9确实缓震更好，不过要899块，超了你预算。如果你愿意加一点预算的话，它的Meta-Rocker弧形鞋底对膝盖保护更到位。不过预算紧的话，第一款Asics已经很够用了。","turn":10,"agent":"SentimentAgent","timestamp":"2026-06-12T10:00:39Z"}'
+-- Turn 10: EmotionAgent explains trade-off
+RPUSH vs:short_memory:a1b2c3d4-e5f6-7890-abcd-ef1234567890 '{"role":"ASSISTANT","content":"第二款HOKA Clifton 9确实缓震更好，不过要899块，超了你预算。如果你愿意加一点预算的话，它的Meta-Rocker弧形鞋底对膝盖保护更到位。不过预算紧的话，第一款Asics已经很够用了。","turn":10,"agent":"EmotionAgent","timestamp":"2026-06-12T10:00:39Z"}'
 
 -- Set TTL 30 minutes
 EXPIRE vs:short_memory:a1b2c3d4-e5f6-7890-abcd-ef1234567890 1800
