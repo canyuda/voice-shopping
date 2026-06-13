@@ -32,23 +32,31 @@ Product vector search capability: entity mapping with pgvector support, reposito
 - **THEN** product 表 id=8821 的 embedding 和 embedding_text 字段被更新
 
 ### Requirement: ProductVectorService 余弦相似度检索
-`ProductVectorService` SHALL 提供 `search(Long merchantId, String queryText, float[] queryVector, int topK, BigDecimal minPrice, BigDecimal maxPrice, Map<String, Object> attributeFilters)` 方法，返回 `List<ProductSearchResult>`。
+`ProductVectorService` SHALL 提供 `search(float[] queryVector, String extraFilter, List<Object> extraParams, int topK)` 方法，返回 `List<ProductSearchResult>`。
 
-#### Scenario: 基础向量检索
-- **WHEN** 调用 `search` 传入 merchantId=1, queryVector=[float[1024]], topK=5
+- 移除 `merchantId`、`minPrice`、`maxPrice`、`attributeFilters` 参数
+- 新增 `extraFilter`（额外 WHERE 子句片段）和 `extraParams`（对应参数值）
+- SQL 模板中 `merchant_id` 过滤处加 `-- TODO: add merchant_id filter for multi-tenancy` 注释，暂不加 merchant_id 条件
+- `extraFilter` 非空时追加 `AND <extraFilter>` 到 WHERE 子句
+- SQL 使用 `embedding <=> ? AS distance` + `ORDER BY distance` 确保 HNSW 索引命中（避免 `1 - (...) DESC` 表达式包装导致全表扫描）
+- similarity 在 mapRow 中由 `1 - distance` 换算
+- 同步修改 `/api/v1/search` 接口使用新签名
+
+#### Scenario: 基础向量检索（无额外过滤）
+- **WHEN** 调用 `search(queryVector, "", List.of(), 5)`
 - **THEN** 返回最多 5 条结果，按余弦相似度降序排列，且 embedding 字段非空
 
-#### Scenario: 带价格区间过滤的检索
-- **WHEN** 调用 `search` 传入 minPrice=100, maxPrice=500
-- **THEN** 结果中所有商品的 price 在 [100, 500] 区间内
-
-#### Scenario: 带 JSONB 属性过滤的检索
-- **WHEN** 调用 `search` 传入 attributeFilters={"brand": "Asics"}
-- **THEN** SQL WHERE 条件包含 `attributes @> '{"brand":"Asics"}'::jsonb`，结果只返回品牌为 Asics 的商品
+#### Scenario: 带额外过滤的检索
+- **WHEN** 调用 `search(queryVector, "price <= ? AND attributes @> CAST(? AS jsonb)", List.of(500, "{\"brand\":\"Nike\"}"), 10)`
+- **THEN** SQL WHERE 包含 `price <= ?` 和 `attributes @> CAST(? AS jsonb)` 条件，返回最多 10 条结果
 
 #### Scenario: 排除已删除商品
 - **WHEN** 检索执行
 - **THEN** SQL WHERE 条件包含 `deleted_at IS NULL`，不返回已软删除的商品
+
+#### Scenario: extraFilter 为空时不追加条件
+- **WHEN** 调用 `search(queryVector, "", List.of(), 5)`
+- **THEN** SQL 不包含额外的 AND 条件
 
 ### Requirement: ProductSearchResult 返回 Record DTO
 `ProductSearchResult` SHALL 为 Java Record，包含 productId、name、categoryL1、categoryL2、price、imageUrls、attributes、similarity 字段。

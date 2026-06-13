@@ -4,12 +4,12 @@ import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.pgvector.PGvector;
+import org.jetbrains.annotations.NotNull;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Service;
 
-import java.math.BigDecimal;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
@@ -52,61 +52,68 @@ public class ProductVectorService {
     }
 
     /**
-     * Search products by cosine similarity with optional filters.
+     * Search products by cosine similarity with optional extra filter.
      *
-     * @param merchantId       required tenant filter
-     * @param queryVector      embedding of the search query
-     * @param topK             max results to return
-     * @param minPrice         optional lower price bound (inclusive)
-     * @param maxPrice         optional upper price bound (inclusive)
-     * @param attributeFilters optional JSONB attribute containment filter
+     * @param queryVector embedding of the search query
+     * @param extraFilter optional SQL WHERE fragment (e.g. "price <= ? AND attributes @> CAST(? AS jsonb)")
+     * @param extraParams parameter values for the extraFilter placeholders
+     * @param topK        max results to return
      * @return results ordered by similarity descending
      */
     public List<ProductSearchResult> search(
-            long merchantId,
             float[] queryVector,
-            int topK,
-            BigDecimal minPrice,
-            BigDecimal maxPrice,
-            Map<String, Object> attributeFilters) {
+            String extraFilter,
+            List<Object> extraParams,
+            int topK) {
 
+        // TODO: add merchant_id filter for multi-tenancy
+        // Single vector param: SELECT distance AS embedding <=> ?, ORDER BY distance.
+        // Planner expands the alias back to `embedding <=> ?` ASC → hits HNSW index.
+        // similarity (1 - distance) is derived in mapRow, not in SQL.
         StringBuilder sql = new StringBuilder("""
                 SELECT id, name, category_l1, category_l2, price, image_urls, attributes,
-                       1 - (embedding <=> ?) AS similarity
+                       embedding <=> ? AS distance
                 FROM product
-                WHERE merchant_id = ?
-                  AND deleted_at IS NULL
+                WHERE status = 'ON_SALE' AND deleted_at IS NULL
                   AND embedding IS NOT NULL
                 """);
 
         List<Object> params = new ArrayList<>();
         params.add(new PGvector(queryVector));
-        params.add(merchantId);
-
-        if (minPrice != null) {
-            sql.append(" AND price >= ?");
-            params.add(minPrice);
+        if (extraFilter != null && !extraFilter.isBlank()) {
+            sql.append(" AND ").append(extraFilter);
         }
-        if (maxPrice != null) {
-            sql.append(" AND price <= ?");
-            params.add(maxPrice);
-        }
-        if (attributeFilters != null && !attributeFilters.isEmpty()) {
-            sql.append(" AND attributes @> CAST(? AS jsonb)");
-            try {
-                params.add(objectMapper.writeValueAsString(attributeFilters));
-            } catch (JsonProcessingException e) {
-                throw new IllegalStateException("Failed to serialize attribute filters", e);
-            }
-        }
-
-        sql.append(" ORDER BY similarity DESC LIMIT ?");
+        params.addAll(extraParams);
+        // <=> 是 pgvector 的 cosine distance 运算符，越小越相似
+        sql.append(" ORDER BY distance LIMIT ?");
         params.add(topK);
+
+        if (log.isDebugEnabled()) {
+            log.debug("Vector search full SQL: \n{}", getFullSql(sql, params));
+        }
 
         return jdbc.query(sql.toString(), this::mapRow, params.toArray());
     }
 
+    @NotNull
+    private static String getFullSql(StringBuilder sql, List<Object> params) {
+        String sqlStr = sql.toString();
+        List<String> displayParams = params.stream()
+                .map(p -> {
+                    String s = String.valueOf(p);
+                    return s.length() > 100 ? "<超长字段>" : s;
+                })
+                .toList();
+        // Interpolate params into SQL for readability
+        String fullSql = sqlStr;
+        for (String dp : displayParams) {
+            fullSql = fullSql.replaceFirst("\\?", dp);
+        }
+        return fullSql;
+    }
+
     private ProductSearchResult mapRow(java.sql.ResultSet rs, int rowNum) throws java.sql.SQLException {
+        double distance = rs.getDouble("distance");
         return new ProductSearchResult(
                 rs.getLong("id"),
                 rs.getString("name"),
@@ -115,7 +122,7 @@ public class ProductVectorService {
                 rs.getBigDecimal("price"),
                 parseJson(rs.getString("image_urls"), STRING_LIST_TYPE, Collections.emptyList()),
                 parseJson(rs.getString("attributes"), OBJECT_MAP_TYPE, Collections.emptyMap()),
-                rs.getDouble("similarity")
+                1.0 - distance
         );
     }
 

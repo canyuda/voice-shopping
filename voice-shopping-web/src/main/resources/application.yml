@@ -77,8 +77,7 @@ voice-shopping:
 
 logging:
   level:
-    com.voiceshopping.business.agent: DEBUG
-    io.agentscope: DEBUG
+    com.voiceshopping: DEBUG
 
 # Spring AI Alibaba
 spring-ai:

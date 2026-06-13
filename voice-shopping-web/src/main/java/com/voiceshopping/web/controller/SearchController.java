@@ -1,17 +1,17 @@
 package com.voiceshopping.web.controller;
 
-import com.fasterxml.jackson.core.type.TypeReference;
-import com.fasterxml.jackson.databind.ObjectMapper;
 import com.voiceshopping.common.dto.ApiResult;
+import com.voiceshopping.common.dto.agent.Filter;
 import com.voiceshopping.infrastructure.vector.EmbeddingService;
 import com.voiceshopping.infrastructure.vector.ProductVectorService;
+import com.voiceshopping.infrastructure.vector.SqlFilterBuilder;
 import com.voiceshopping.web.dto.SearchResponse;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
-import java.math.BigDecimal;
+import java.util.LinkedHashMap;
 import java.util.Map;
 
 /**
@@ -23,30 +23,38 @@ public class SearchController {
 
     private final EmbeddingService embeddingService;
     private final ProductVectorService productVectorService;
-    private final ObjectMapper objectMapper;
+    private final SqlFilterBuilder sqlFilterBuilder;
 
     public SearchController(EmbeddingService embeddingService,
                             ProductVectorService productVectorService,
-                            ObjectMapper objectMapper) {
+                            SqlFilterBuilder sqlFilterBuilder) {
         this.embeddingService = embeddingService;
         this.productVectorService = productVectorService;
-        this.objectMapper = objectMapper;
+        this.sqlFilterBuilder = sqlFilterBuilder;
     }
 
     @GetMapping("/search")
     public ApiResult<SearchResponse> search(
             @RequestParam String q,
-            @RequestParam(defaultValue = "1") long merchantId,
             @RequestParam(defaultValue = "5") int topK,
-            @RequestParam(required = false) BigDecimal minPrice,
-            @RequestParam(required = false) BigDecimal maxPrice,
+            @RequestParam(required = false) Double maxPrice,
             @RequestParam(required = false) String attributes) {
 
         float[] queryVector = embeddingService.embed(q);
-        Map<String, Object> attributeFilters = parseAttributes(attributes);
+
+        // Build filter from request params
+        Map<String, Object> slots = new LinkedHashMap<>();
+        if (maxPrice != null) {
+            slots.put("budget", maxPrice);
+        }
+        if (attributes != null && !attributes.isBlank()) {
+            parseAttributesInto(attributes, slots);
+        }
+
+        Filter filter = sqlFilterBuilder.fromSlots(slots);
 
         var results = productVectorService.search(
-                merchantId, queryVector, topK, minPrice, maxPrice, attributeFilters);
+                queryVector, filter.clause(), filter.params(), topK);
 
         var items = results.stream()
                 .map(r -> new SearchResponse.SearchItem(
@@ -61,14 +69,17 @@ public class SearchController {
         return ApiResult.ok(new SearchResponse(q, items.size(), items));
     }
 
-    private Map<String, Object> parseAttributes(String attributes) {
-        if (attributes == null || attributes.isBlank()) {
-            return null;
-        }
+    /**
+     * Parse JSON attributes string and merge into slots map.
+     */
+    @SuppressWarnings("unchecked")
+    private void parseAttributesInto(String attributes, Map<String, Object> slots) {
         try {
-            return objectMapper.readValue(attributes, new TypeReference<>() {});
+            Map<String, Object> parsed = new com.fasterxml.jackson.databind.ObjectMapper()
+                    .readValue(attributes, new com.fasterxml.jackson.core.type.TypeReference<>() {});
+            slots.putAll(parsed);
         } catch (Exception e) {
-            return null;
+            // ignore malformed JSON
         }
     }
 }
