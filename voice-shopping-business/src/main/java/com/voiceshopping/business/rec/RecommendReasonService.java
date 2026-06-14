@@ -3,6 +3,7 @@ package com.voiceshopping.business.rec;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.voiceshopping.ai.agent.AgentFactory;
+import com.voiceshopping.business.agent.AgentMemoryPolicy;
 import com.voiceshopping.common.dto.agent.RecommendedItem;
 import io.agentscope.core.ReActAgent;
 import io.agentscope.core.message.Msg;
@@ -27,10 +28,14 @@ public class RecommendReasonService {
 
     private final AgentFactory agentFactory;
     private final ObjectMapper objectMapper;
+    private final AgentMemoryPolicy memoryPolicy;
 
-    public RecommendReasonService(AgentFactory agentFactory, ObjectMapper objectMapper) {
+    public RecommendReasonService(AgentFactory agentFactory,
+                                  ObjectMapper objectMapper,
+                                  AgentMemoryPolicy memoryPolicy) {
         this.agentFactory = agentFactory;
         this.objectMapper = objectMapper;
+        this.memoryPolicy = memoryPolicy;
     }
 
     /**
@@ -50,6 +55,7 @@ public class RecommendReasonService {
 
         try {
             ReActAgent agent = agentFactory.getRecAgent(sessionId);
+            memoryPolicy.beforeRecommendCall(agent);
             String userMsg = buildUserMessage(userNeeds, products);
 
             Msg response = agent.call(

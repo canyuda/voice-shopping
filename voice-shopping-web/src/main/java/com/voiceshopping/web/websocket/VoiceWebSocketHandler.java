@@ -1,9 +1,11 @@
 package com.voiceshopping.web.websocket;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.voiceshopping.ai.agent.AgentFactory;
 import com.voiceshopping.ai.asr.ASRService;
 import com.voiceshopping.ai.asr.ASRServiceFactory;
 import com.voiceshopping.ai.tts.TTSService;
+import com.voiceshopping.business.memory.LongTermMemoryWriter;
 import com.voiceshopping.business.orchestrator.OrchestratorService;
 import com.voiceshopping.business.session.SessionService;
 import com.voiceshopping.common.dto.AgentDisplay;
@@ -51,6 +53,8 @@ public class VoiceWebSocketHandler extends AbstractWebSocketHandler {
     private final TTSService ttsService;
     private final OrchestratorService orchestratorService;
     private final SessionService sessionService;
+    private final AgentFactory agentFactory;
+    private final LongTermMemoryWriter longTermMemoryWriter;
     private final ObjectMapper objectMapper;
 
     // Track ASRService per session for lifecycle management
@@ -60,11 +64,15 @@ public class VoiceWebSocketHandler extends AbstractWebSocketHandler {
                                  TTSService ttsService,
                                  OrchestratorService orchestratorService,
                                  SessionService sessionService,
+                                 AgentFactory agentFactory,
+                                 LongTermMemoryWriter longTermMemoryWriter,
                                  ObjectMapper objectMapper) {
         this.asrServiceFactory = asrServiceFactory;
         this.ttsService = ttsService;
         this.orchestratorService = orchestratorService;
         this.sessionService = sessionService;
+        this.agentFactory = agentFactory;
+        this.longTermMemoryWriter = longTermMemoryWriter;
         this.objectMapper = objectMapper;
     }
 
@@ -125,12 +133,36 @@ public class VoiceWebSocketHandler extends AbstractWebSocketHandler {
 
     @Override
     public void afterConnectionClosed(WebSocketSession session, CloseStatus status) throws Exception {
-        String sessionId = session.getId();
-        log.info("WebSocket connection closed: {}, status: {}", sessionId, status);
+        String wsId = session.getId();
+        log.info("WebSocket connection closed: wsId={}, status={}", wsId, status);
 
-        ASRService sessionAsr = sessionAsrMap.remove(sessionId);
+        ASRService sessionAsr = sessionAsrMap.remove(wsId);
         if (sessionAsr != null) {
             sessionAsr.stop();
+        }
+
+        String bizSessionId = (String) session.getAttributes().get(VoiceHandshakeInterceptor.ATTR_SESSION_ID);
+        Long userId = (Long) session.getAttributes().get(VoiceHandshakeInterceptor.ATTR_USER_ID);
+
+        // Long-term memory writeback. ShortTermMemory acts as the idempotency gate
+        // inside flushOnSessionEnd — multiple triggers (this WS close + a later
+        // SessionExpireListener firing for the same TTL key) all converge into a
+        // single PG write because a successful flush clears ShortTermMemory.
+        if (bizSessionId != null && userId != null) {
+            try {
+                longTermMemoryWriter.flushOnSessionEnd(bizSessionId, userId);
+            } catch (Exception e) {
+                // flushOnSessionEnd is @Async; only the fail-fast guard exceptions
+                // (null/blank arg) reach here. Don't let close-handling fail.
+                log.warn("flushOnSessionEnd dispatch failed on WS close: bizSessionId={}, userId={}",
+                        bizSessionId, userId, e);
+            }
+        }
+
+        // Release the cached AgentSet so InMemoryMemory references are GC-eligible.
+        if (bizSessionId != null) {
+            agentFactory.remove(bizSessionId);
+            log.debug("AgentFactory cache evicted on close: bizSessionId={}", bizSessionId);
         }
     }
 

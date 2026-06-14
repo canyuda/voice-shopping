@@ -8,6 +8,7 @@ import com.voiceshopping.business.agent.IntentService;
 import com.voiceshopping.business.compliance.ComplianceChecker;
 import com.voiceshopping.business.event.VoiceEventPublisher;
 import com.voiceshopping.business.memory.ShortTermMemory;
+import com.voiceshopping.business.memory.TurnSummarizer;
 import com.voiceshopping.business.perspective.PerspectiveHubService;
 import com.voiceshopping.business.rec.ParallelRecommendService;
 import com.voiceshopping.business.session.SessionStateService;
@@ -85,6 +86,7 @@ public class OrchestratorService {
     private final EmotionService emotionService;
     private final ComplianceChecker complianceChecker;
     private final ObjectMapper objectMapper;
+    private final TurnSummarizer turnSummarizer;
 
     private final boolean perspectiveEnabled;
 
@@ -103,6 +105,7 @@ public class OrchestratorService {
                                EmotionService emotionService,
                                ComplianceChecker complianceChecker,
                                ObjectMapper objectMapper,
+                               TurnSummarizer turnSummarizer,
                                MeterRegistry meterRegistry,
                                @Value("${voice-shopping.perspective.enabled:false}") boolean perspectiveEnabled) {
         this.sessionRepository = sessionRepository;
@@ -117,6 +120,7 @@ public class OrchestratorService {
         this.emotionService = emotionService;
         this.complianceChecker = complianceChecker;
         this.objectMapper = objectMapper;
+        this.turnSummarizer = turnSummarizer;
         this.perspectiveEnabled = perspectiveEnabled;
 
         // Pre-build one Timer per IntentEnum so finally-block lookup is O(1) (D13).
@@ -149,36 +153,41 @@ public class OrchestratorService {
             voiceEventPublisher.publish(new UserSpokenEvent(
                     sessionId, userId, utterance, System.currentTimeMillis()));
 
-            // 3. Append USER turn — must be persisted before intent classification
-            //    so subsequent agents see it via ShortTermMemory.recent().
-            shortTermMemory.append(sessionId, new ShortTermMemory.Turn(
-                    "USER", utterance, null, Instant.now()));
-
-            // 4. Load session_state (or initialize a fresh one)
+            // 3. Load session_state (or initialize a fresh one). The current utterance
+            //    is passed to IntentService directly — no need to pre-append a USER turn;
+            //    a TURN summary will be written at the end of this method instead.
             SessionState state = sessionStateService.load(sessionId)
                     .orElseGet(() -> initialState(sessionId, session.getMerchantId()));
 
-            // 5. Intent classification
+            // 4. Intent classification
             IntentResult intent = intentService.classify(sessionId, utterance);
             log.info("Intent classified for session={}: {} (confidence={})",
                     sessionId, intent.intent(), intent.confidence());
 
-            // 6. Apply revision rules (priceDirection anchor / info-sufficient)
+            // 5. Apply revision rules (priceDirection anchor / info-sufficient)
             RevisedIntent revised = reviseIntent(intent, state);
             finalIntent = revised.intent();
             log.info("Intent revised for session={}: {} → {}", sessionId, intent.intent(), finalIntent);
 
-            // 7. Dispatch by final intent (each branch returns the BranchOutcome
+            // 6. Dispatch by final intent (each branch returns the BranchOutcome
             //    carrying EmotionResult + branch-specific writeback markers)
             BranchOutcome outcome = dispatch(sessionId, userId, utterance, state, revised);
 
-            // 8. Compliance pass-through (placeholder)
+            // 7. Compliance pass-through (placeholder)
             EmotionResult safeReply = complianceChecker.ensureCompliant(sessionId, userId, outcome.reply());
 
-            // 9. Append ASSISTANT turn — agent tag carries the final (post-revision)
+            // 8. Append ASSISTANT turn — agent tag carries the final (post-revision)
             //    intent name so downstream consumers can attribute replies.
+            Instant now = Instant.now();
             shortTermMemory.append(sessionId, new ShortTermMemory.Turn(
-                    "ASSISTANT", safeReply.speechText(), finalIntent.name(), Instant.now()));
+                    "ASSISTANT", safeReply.speechText(), finalIntent.name(), now));
+
+            // 9. Append TURN summary — compact one-line view of this completed turn,
+            //    feeding next-turn IntentService.recent(3). Replaces the previous USER
+            //    raw entry to avoid double-counting in the recent window.
+            String summary = turnSummarizer.summarize(utterance, finalIntent, safeReply.speechText());
+            shortTermMemory.append(sessionId, new ShortTermMemory.Turn(
+                    "TURN", summary, finalIntent.name(), now));
 
             // 10. Persist final session_state
             persistState(state, finalIntent, revised.mergedSlots(), outcome);

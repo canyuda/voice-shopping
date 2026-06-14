@@ -1,16 +1,5 @@
 ## ADDED Requirements
 
-### Requirement: Turn record
-The system SHALL define an inner `Turn` record in `ShortTermMemory` with fields: `role` (String，合法取值 `USER` / `ASSISTANT` / `SYSTEM` / `TURN`), `content` (String), `turn` (int), `agent` (String, nullable — identifies which agent produced this turn, e.g. "IntentAgent", "RecAgent"; null for USER turns; for TURN role 此字段为该轮最终矫正后的 IntentEnum.name()), `timestamp` (Instant)。
-
-#### Scenario: Turn serialization
-- **WHEN** a Turn is serialized to JSON and stored in Redis
-- **THEN** it can be deserialized back to an identical Turn instance
-
-#### Scenario: TURN 角色 agent 字段持有 IntentEnum.name
-- **WHEN** Orchestrator 写入 TURN 摘要 `Turn(role="TURN", content=..., agent="PRODUCT_RECOMMENDATION", timestamp=...)`
-- **THEN** Redis 反序列化后 agent 字段值仍为 "PRODUCT_RECOMMENDATION"，可用于下游分析与调试
-
 ### Requirement: TURN 角色取值
 
 系统 SHALL 扩展 `ShortTermMemory.Turn.role` 字段的合法取值集合，新增 `"TURN"` 取值，表示一轮已完结的合并摘要。完整合法取值集合更新为：`USER` / `ASSISTANT` / `SYSTEM` / `TURN`。
@@ -35,22 +24,10 @@ The system SHALL define an inner `Turn` record in `ShortTermMemory` with fields:
 - **WHEN** `summarize("...", intent, "")` 被调用
 - **THEN** 返回字符串 `"[xxx] 用户：... / 助手："` （末尾空，不抛异常）
 
-### Requirement: ShortTermMemory append
-The system SHALL provide an `append(sessionId, Turn)` method that appends a Turn to the Redis List `vs:short_memory:{sessionId}` and trims the list to `max-history-turns` entries. On first append, the Redis key SHALL be assigned the configured TTL.
-
-#### Scenario: Append to new session
-- **WHEN** `append(sessionId, turn)` is called for a session with no existing memory
-- **THEN** a Redis List is created with one entry, TTL is set, and list length is 1
-
-#### Scenario: Append and trim at max capacity
-- **WHEN** `append(sessionId, turn)` is called and the list already has `max-history-turns` entries
-- **THEN** the oldest entry is removed, the new entry is appended, and list length remains `max-history-turns`
-
-#### Scenario: TTL set on first append only
-- **WHEN** `append(sessionId, turn)` is called on a brand-new Redis key
-- **THEN** the TTL is set to the configured value (default 30 minutes)
+## MODIFIED Requirements
 
 ### Requirement: ShortTermMemory recent
+
 The system SHALL provide a `recent(sessionId, n)` method that returns the most recent `n` Turns from the Redis List, ordered from oldest to newest. 返回的 Turn 列表中 role 取值集合 MUST 反映新的合法集合：`USER` / `ASSISTANT` / `SYSTEM` / `TURN`。下游消费方（IntentService、EmotionService）在拼接 prompt 时 MUST 容忍 TURN 摘要型条目与传统 USER/ASSISTANT 条目混合存在的情形。
 
 #### Scenario: Request fewer turns than stored
@@ -81,16 +58,14 @@ The system SHALL provide a `recent(sessionId, n)` method that returns the most r
 - **WHEN** 短期记忆中混合存在 USER / ASSISTANT / TURN 三种 role 的条目，IntentService 调用 `recent(sessionId, 3)`
 - **THEN** 返回的 3 条 Turn 按时间序无歧义返回，不因新增 TURN 角色而过滤或抛异常
 
-### Requirement: ShortTermMemory clear
-The system SHALL provide a `clear(sessionId)` method that deletes the Redis List `vs:short_memory:{sessionId}`.
+### Requirement: Turn record
 
-#### Scenario: Clear existing memory
-- **WHEN** `clear(sessionId)` is called on a session with existing memory entries
-- **THEN** the Redis key is deleted and subsequent `recent()` calls return empty list
+The system SHALL define an inner `Turn` record in `ShortTermMemory` with fields: `role` (String，合法取值 `USER` / `ASSISTANT` / `SYSTEM` / `TURN`), `content` (String), `turn` (int), `agent` (String, nullable — identifies which agent produced this turn, e.g. "IntentAgent", "RecAgent"; null for USER turns; for TURN role 此字段为该轮最终矫正后的 IntentEnum.name()), `timestamp` (Instant)。
 
-### Requirement: Configurable TTL and max-history-turns
-The system SHALL accept configuration properties for `voice-shopping.memory.short-term.ttl` (default 30m) and `voice-shopping.memory.short-term.max-history-turns` (default 20).
+#### Scenario: Turn serialization
+- **WHEN** a Turn is serialized to JSON and stored in Redis
+- **THEN** it can be deserialized back to an identical Turn instance
 
-#### Scenario: Custom configuration values
-- **WHEN** the application is started with `voice-shopping.memory.short-term.ttl=60m` and `voice-shopping.memory.short-term.max-history-turns=50`
-- **THEN** ShortTermMemory uses 60 minutes TTL and trims to 50 entries
+#### Scenario: TURN 角色 agent 字段持有 IntentEnum.name
+- **WHEN** Orchestrator 写入 TURN 摘要 `Turn(role="TURN", content=..., agent="PRODUCT_RECOMMENDATION", timestamp=...)`
+- **THEN** Redis 反序列化后 agent 字段值仍为 "PRODUCT_RECOMMENDATION"，可用于下游分析与调试

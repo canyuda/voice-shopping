@@ -8,6 +8,7 @@ import com.voiceshopping.business.agent.IntentService;
 import com.voiceshopping.business.compliance.ComplianceChecker;
 import com.voiceshopping.business.event.VoiceEventPublisher;
 import com.voiceshopping.business.memory.ShortTermMemory;
+import com.voiceshopping.business.memory.TurnSummarizer;
 import com.voiceshopping.business.perspective.PerspectiveHubService;
 import com.voiceshopping.business.rec.ParallelRecommendService;
 import com.voiceshopping.business.session.SessionStateService;
@@ -70,6 +71,7 @@ class OrchestratorServiceTest {
     private EmotionService emotionService;
     private ComplianceChecker complianceChecker;
     private ObjectMapper objectMapper;
+    private TurnSummarizer turnSummarizer;
 
     @BeforeEach
     void setup() {
@@ -88,6 +90,7 @@ class OrchestratorServiceTest {
         when(complianceChecker.ensureCompliant(anyString(), any(), any()))
                 .thenAnswer(inv -> inv.getArgument(2));
         objectMapper = new ObjectMapper();
+        turnSummarizer = new TurnSummarizer();
 
         // Default: session exists, state is empty.
         Session session = new Session();
@@ -105,7 +108,8 @@ class OrchestratorServiceTest {
                 sessionRepository, sessionStateService, shortTermMemory, voiceEventPublisher,
                 intentService, clarifyService, clarifyRuleService,
                 parallelRecommendService, perspectiveHubService, emotionService,
-                complianceChecker, objectMapper, new SimpleMeterRegistry(), perspectiveEnabled);
+                complianceChecker, objectMapper, turnSummarizer,
+                new SimpleMeterRegistry(), perspectiveEnabled);
     }
 
     // ---------------------------------------------------------------------
@@ -442,18 +446,40 @@ class OrchestratorServiceTest {
 
         verify(voiceEventPublisher, atLeastOnce()).publish(any(UserSpokenEvent.class));
 
-        // USER turn must precede ASSISTANT turn — capture all appends, then assert order.
+        // After the change: each turn appends ASSISTANT then TURN — no leading USER row.
         ArgumentCaptor<ShortTermMemory.Turn> turnCaptor =
                 ArgumentCaptor.forClass(ShortTermMemory.Turn.class);
         verify(shortTermMemory, times(2)).append(eq(SESSION_ID), turnCaptor.capture());
         List<ShortTermMemory.Turn> turns = turnCaptor.getAllValues();
-        assertThat(turns.get(0).role()).isEqualTo("USER");
-        assertThat(turns.get(0).content()).isEqualTo("你好");
-        assertThat(turns.get(1).role()).isEqualTo("ASSISTANT");
+        assertThat(turns.get(0).role()).isEqualTo("ASSISTANT");
+        assertThat(turns.get(0).agent()).isEqualTo("OUT_OF_SCOPE");
+        assertThat(turns.get(1).role()).isEqualTo("TURN");
+        assertThat(turns.get(1).agent()).isEqualTo("OUT_OF_SCOPE");
+        // TURN summary content carries the [INTENT] prefix and original user utterance.
+        assertThat(turns.get(1).content())
+                .startsWith("[OUT_OF_SCOPE]")
+                .contains("你好");
 
         // turnCount monotonic: 3 → 4
         SessionState saved = captureSavedState();
         assertThat(saved.getTurnCount()).isEqualTo(4);
+    }
+
+    @Test
+    void dispatchThrows_doesNotAppendAssistantOrTurn() {
+        when(intentService.classify(eq(SESSION_ID), anyString()))
+                .thenReturn(new IntentResult(IntentEnum.PRODUCT_RECOMMENDATION,
+                        Map.of("category", "跑鞋"), 0.9));
+        when(clarifyService.decide(eq(SESSION_ID), anyString(), any()))
+                .thenThrow(new RuntimeException("clarify boom"));
+
+        assertThatThrownBy(() -> buildOrchestrator(false).handle(SESSION_ID, USER_ID, "想买跑鞋"))
+                .isInstanceOf(RuntimeException.class)
+                .hasMessageContaining("clarify boom");
+
+        // No memory writes when dispatch fails before the ASSISTANT/TURN appends.
+        verify(shortTermMemory, never()).append(anyString(), any());
+        verify(sessionStateService, never()).save(any());
     }
 
     // ---------------------------------------------------------------------

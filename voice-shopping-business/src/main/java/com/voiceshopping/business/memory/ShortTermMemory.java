@@ -46,11 +46,14 @@ public class ShortTermMemory {
     /**
      * A single dialogue turn stored in short-term memory.
      *
-     * @param role      USER / ASSISTANT / SYSTEM
+     * @param role      one of {@code USER} / {@code ASSISTANT} / {@code SYSTEM} / {@code TURN}.
+     *                  {@code TURN} carries a one-line summary produced by
+     *                  {@link TurnSummarizer} that compresses a completed user+assistant
+     *                  exchange — used as compact context for the next intent classification.
      * @param content   the text content of this turn
      * @param agent     which agent / intent produced this turn — null for USER turns;
-     *                  for ASSISTANT turns this is the {@code IntentEnum.name()} of
-     *                  the final (post-revision) intent driving the reply
+     *                  for ASSISTANT and TURN turns this is the {@code IntentEnum.name()}
+     *                  of the final (post-revision) intent driving the reply
      * @param timestamp when this turn was created
      */
     @com.fasterxml.jackson.annotation.JsonIgnoreProperties(ignoreUnknown = true)

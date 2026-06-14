@@ -25,10 +25,14 @@ public class ClarifyService {
 
     private final ClarifyRuleService ruleService;
     private final AgentFactory agentFactory;
+    private final AgentMemoryPolicy memoryPolicy;
 
-    public ClarifyService(ClarifyRuleService ruleService, AgentFactory agentFactory) {
+    public ClarifyService(ClarifyRuleService ruleService,
+                          AgentFactory agentFactory,
+                          AgentMemoryPolicy memoryPolicy) {
         this.ruleService = ruleService;
         this.agentFactory = agentFactory;
+        this.memoryPolicy = memoryPolicy;
     }
 
     /**
@@ -57,7 +61,7 @@ public class ClarifyService {
 
         // 4. LLM generates natural follow-up question
         ReActAgent agent = agentFactory.getClarifyAgent(sessionId);
-//        agent.getMemory().clear();
+        memoryPolicy.beforeClarifyCall(agent);
 
         String userMsg = buildUserMsg(utterance, slots, truncated);
         log.info("[ClarifyAgent] LLM request for session={}:\n{}", sessionId, userMsg);

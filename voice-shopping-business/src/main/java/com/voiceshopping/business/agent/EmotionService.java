@@ -37,19 +37,19 @@ public class EmotionService {
 
     private static final Logger log = LoggerFactory.getLogger(EmotionService.class);
 
-    /** Cap on cross-turn InMemoryMemory size; InMemoryMemory has no built-in trim. */
-    private static final int MAX_EMOTION_MEMORY_MESSAGES = 10;
-
     private final AgentFactory agentFactory;
     private final SessionMoodDetector moodDetector;
     private final ObjectMapper objectMapper;
+    private final AgentMemoryPolicy memoryPolicy;
 
     public EmotionService(AgentFactory agentFactory,
                           SessionMoodDetector moodDetector,
-                          ObjectMapper objectMapper) {
+                          ObjectMapper objectMapper,
+                          AgentMemoryPolicy memoryPolicy) {
         this.agentFactory = agentFactory;
         this.moodDetector = moodDetector;
         this.objectMapper = objectMapper;
+        this.memoryPolicy = memoryPolicy;
     }
 
     /**
@@ -64,7 +64,7 @@ public class EmotionService {
         String mood = moodDetector.detect(sessionId, userUtterance);
 
         ReActAgent agent = agentFactory.getEmotionAgent(sessionId);
-        trimMemoryIfNeeded(agent);
+        memoryPolicy.beforeEmotionCall(agent);
 
         String userMsg = buildUserMsg(userUtterance, mood, rec);
         log.info("[EmotionAgent] LLM request for session={}:\n{}", sessionId, userMsg);
@@ -152,17 +152,6 @@ public class EmotionService {
         return reason.isBlank()
                 ? "第" + ordinal + "款: " + name
                 : "第" + ordinal + "款: " + name + ", " + reason;
-    }
-
-    /**
-     * InMemoryMemory has no built-in cap; trim the oldest messages to bound
-     * cross-turn growth while preserving recent continuity.
-     */
-    private void trimMemoryIfNeeded(ReActAgent agent) {
-        int excess = agent.getMemory().getMessages().size() - MAX_EMOTION_MEMORY_MESSAGES;
-        for (int i = 0; i < excess; i++) {
-            agent.getMemory().deleteMessage(0);
-        }
     }
 
     private static String nullSafe(String s) {

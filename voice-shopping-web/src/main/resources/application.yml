@@ -76,6 +76,25 @@ voice-shopping:
       voice: ${VOICE_TTS_VOICE:longwan}
   perspective:
     enabled: true
+  memory:
+    long-term:
+      # 会话结束时把对话中提到过的品类/品牌按权重写回 user_profile_dynamic。
+      # 提及权重显著低于行为回流（view=0.05 / purchase=0.15），保持信号强度梯度。
+      category-mention-weight: 0.05
+      brand-mention-weight: 0.03
+    session-state:
+      # vs:session:{id} 在 Redis 的 TTL；过期后由 SessionExpireListener 触发长期记忆回流。
+      ttl: 30m
+    keyspace-notification:
+      # Redis SessionExpireListener 的前置启动检查。
+      # 打开后启动期会执行 CONFIG GET notify-keyspace-events，未含 'Ex' 直接 fail-fast。
+      # 默认关闭：当前版本未启用 SessionExpireListener。
+      check-on-startup: false
+    session-expire-listener:
+      # 启用后 vs:session:{id} TTL 过期会自动触发 LongTermMemoryWriter.flushOnSessionEnd。
+      # 需要 Redis 配置 notify-keyspace-events=Ex 才能收到事件，建议同时打开
+      # voice-shopping.memory.keyspace-notification.check-on-startup 做 fail-fast 自检。
+      enabled: false
   compliance:
     # 绝对化用词替换。key=违规词，value=合规替代。
     # 顺序重要：长串放前面（"最便宜" 必须先于 "便宜" 命中），LinkedHashMap 保留顺序。

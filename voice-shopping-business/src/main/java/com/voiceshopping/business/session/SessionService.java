@@ -1,5 +1,6 @@
 package com.voiceshopping.business.session;
 
+import com.voiceshopping.common.exception.NotFoundException;
 import com.voiceshopping.infrastructure.repository.SessionRepository;
 import com.voiceshopping.infrastructure.repository.entity.Session;
 import org.slf4j.Logger;
@@ -52,5 +53,19 @@ public class SessionService {
      */
     public List<Session> findByUserId(Long userId) {
         return sessionRepository.findByUserIdOrderByStartedAtDesc(userId);
+    }
+
+    /**
+     * Look up the {@code userId} of the given session. Used by debug entry points
+     * that only know the sessionId (e.g. memory flush) to resolve the profile owner.
+     *
+     * @param sessionId session identifier
+     * @return the userId stored on that session row
+     * @throws NotFoundException if no session row exists for the given id
+     */
+    public Long findUserId(String sessionId) {
+        return sessionRepository.findById(sessionId)
+                .map(Session::getUserId)
+                .orElseThrow(() -> new NotFoundException("会话不存在: " + sessionId));
     }
 }

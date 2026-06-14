@@ -34,15 +34,18 @@ public class IntentService {
     private final ShortTermMemory shortTermMemory;
     private final IntentCache intentCache;
     private final ObjectMapper objectMapper;
+    private final AgentMemoryPolicy memoryPolicy;
 
     public IntentService(AgentFactory agentFactory,
                          ShortTermMemory shortTermMemory,
                          IntentCache intentCache,
-                         ObjectMapper objectMapper) {
+                         ObjectMapper objectMapper,
+                         AgentMemoryPolicy memoryPolicy) {
         this.agentFactory = agentFactory;
         this.shortTermMemory = shortTermMemory;
         this.intentCache = intentCache;
         this.objectMapper = objectMapper;
+        this.memoryPolicy = memoryPolicy;
     }
 
     /**
@@ -66,8 +69,8 @@ public class IntentService {
 
         ReActAgent agent = agentFactory.getIntentAgent(sessionId);
 
-        // Clear previous turn's conversation history — intent is stateless
-        agent.getMemory().clear();
+        // Memory hygiene goes through AgentMemoryPolicy — intent is stateless every turn.
+        memoryPolicy.beforeIntentCall(agent);
 
         log.info("[IntentAgent] LLM request for session={}:\n{}", sessionId, userInput);
 

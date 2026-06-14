@@ -1,4 +1,4 @@
-## ADDED Requirements
+## MODIFIED Requirements
 
 ### Requirement: VoiceWebSocketHandler 全双工处理
 VoiceWebSocketHandler SHALL 继承 `AbstractWebSocketHandler`，处理 WebSocket 连接的完整生命周期。上行 BinaryMessage 接收 PCM 音频帧并推送给 ASRService，ASR 句结束后触发 Agent 流程，Agent 回复送入 TTSService，TTS 输出的 PCM 帧通过 BinaryMessage 下发。
@@ -48,32 +48,3 @@ VoiceWebSocketHandler SHALL 继承 `AbstractWebSocketHandler`，处理 WebSocket
 #### Scenario: 发送到已关闭的连接
 - **WHEN** 尝试向已关闭的 WebSocket session 发送消息
 - **THEN** 跳过发送，日志级别为 warn（非 error）
-
-### Requirement: WebSocketConfig 端点注册
-WebSocketConfig SHALL 实现 `WebSocketConfigurer`，注册 `VoiceWebSocketHandler` 到路径 `/ws/voice`。调试阶段 SHALL 允许所有 origin。
-
-#### Scenario: 端点可连接
-- **WHEN** 浏览器连接 `ws://localhost:8080/ws/voice`
-- **THEN** WebSocket 握手成功，连接建立
-
-### Requirement: 下行 JSON 信令 DTO
-系统 SHALL 定义 4 个 Record 类型用于下行 JSON 信令：`AsrPartialResult(type="asr_partial", text)`、`AsrFinalResult(type="asr_final", text)`、`AgentStatus(type="agent_status", status)`、`VoiceError(type="error", code, message)`。所有 DTO 定义在 `com.voiceshopping.common.dto` 包下。
-
-#### Scenario: AsrPartialResult 序列化
-- **WHEN** 创建 `new AsrPartialResult("asr_partial", "你好")`
-- **THEN** Jackson 序列化为 `{"type":"asr_partial","text":"你好"}`
-
-#### Scenario: AsrFinalResult 序列化
-- **WHEN** 创建 `new AsrFinalResult("asr_final", "你好我想买个手表")`
-- **THEN** Jackson 序列化为 `{"type":"asr_final","text":"你好我想买个手表"}`
-
-#### Scenario: VoiceError 序列化
-- **WHEN** 创建 `new VoiceError("error", "ASR_ERROR", "连接超时")`
-- **THEN** Jackson 序列化为 `{"type":"error","code":"ASR_ERROR","message":"连接超时"}`
-
-### Requirement: Agent 接入点预留
-VoiceWebSocketHandler 在 ASR 句结束到 TTS 合成之间 SHALL 预留 Agent 调用点，标记 `// TODO: Agent integration`。当前阶段直接将 ASR 文本原样传递给 TTS。
-
-#### Scenario: 回显模式
-- **WHEN** ASR 返回句结束文本 "你好我想买个手表"
-- **THEN** 直接将 "你好我想买个手表" 送入 TTSService，不经任何 Agent 处理
