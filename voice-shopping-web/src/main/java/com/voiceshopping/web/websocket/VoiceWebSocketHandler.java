@@ -4,10 +4,14 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.voiceshopping.ai.asr.ASRService;
 import com.voiceshopping.ai.asr.ASRServiceFactory;
 import com.voiceshopping.ai.tts.TTSService;
+import com.voiceshopping.business.orchestrator.OrchestratorService;
+import com.voiceshopping.business.session.SessionService;
+import com.voiceshopping.common.dto.AgentDisplay;
 import com.voiceshopping.common.dto.AgentStatus;
 import com.voiceshopping.common.dto.AsrFinalResult;
 import com.voiceshopping.common.dto.AsrPartialResult;
 import com.voiceshopping.common.dto.VoiceError;
+import com.voiceshopping.common.dto.agent.EmotionResult;
 import com.alibaba.dashscope.audio.asr.recognition.RecognitionResult;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
@@ -18,20 +22,35 @@ import org.springframework.web.socket.handler.AbstractWebSocketHandler;
 import org.springframework.web.socket.WebSocketSession;
 
 import java.io.IOException;
+import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 
 /**
  * Full-duplex WebSocket handler for the voice channel.
  * Protocol: BinaryMessage = PCM audio, TextMessage = JSON signal.
- * Pipeline: ASR → (TODO: Agent) → TTS
+ * Pipeline: ASR → Orchestrator → TTS
+ * <p>
+ * The handshake interceptor lifts {@code sessionId} and {@code userId} from the
+ * connect URL into session attributes; this handler reads them on connect and
+ * delegates each ASR sentence-end to {@link OrchestratorService}, fanning out
+ * the result as: JSON {@code agent_display} (display blocks) → streaming TTS
+ * frames of {@code speechText} → JSON {@code agent_status:done}.
+ * <p>
+ * If the orchestrator throws, falls back to a fixed network-hiccup TTS prompt
+ * so the channel never goes silent.
  */
 @Slf4j
 @Component
 public class VoiceWebSocketHandler extends AbstractWebSocketHandler {
 
+    private static final String FALLBACK_REPLY = "这边网络有点卡，你再说一次？";
+    private static final String DEFAULT_CHANNEL = "HOME_ENTRY";
+
     private final ASRServiceFactory asrServiceFactory;
     private final TTSService ttsService;
+    private final OrchestratorService orchestratorService;
+    private final SessionService sessionService;
     private final ObjectMapper objectMapper;
 
     // Track ASRService per session for lifecycle management
@@ -39,31 +58,47 @@ public class VoiceWebSocketHandler extends AbstractWebSocketHandler {
 
     public VoiceWebSocketHandler(ASRServiceFactory asrServiceFactory,
                                  TTSService ttsService,
+                                 OrchestratorService orchestratorService,
+                                 SessionService sessionService,
                                  ObjectMapper objectMapper) {
         this.asrServiceFactory = asrServiceFactory;
         this.ttsService = ttsService;
+        this.orchestratorService = orchestratorService;
+        this.sessionService = sessionService;
         this.objectMapper = objectMapper;
     }
 
     @Override
     public void afterConnectionEstablished(WebSocketSession session) throws Exception {
-        String sessionId = session.getId();
-        log.info("WebSocket connection established: {}", sessionId);
+        String wsId = session.getId();
+        String bizSessionId = (String) session.getAttributes().get(VoiceHandshakeInterceptor.ATTR_SESSION_ID);
+        Long userId = (Long) session.getAttributes().get(VoiceHandshakeInterceptor.ATTR_USER_ID);
+        log.info("WebSocket connection established: wsId={}, bizSessionId={}, userId={}",
+                wsId, bizSessionId, userId);
 
-        // Create a dedicated ASRService instance per session
+        // Pre-create the business session so the orchestrator's find-only contract is satisfied.
+        if (bizSessionId != null && userId != null) {
+            try {
+                sessionService.getOrCreate(bizSessionId, null, userId, DEFAULT_CHANNEL);
+            } catch (Exception e) {
+                log.warn("Failed to pre-create session bizSessionId={}: {}", bizSessionId, e.getMessage());
+            }
+        }
+
+        // Create a dedicated ASRService instance per WS connection
         ASRService sessionAsr = asrServiceFactory.create();
-        sessionAsrMap.put(sessionId, sessionAsr);
+        sessionAsrMap.put(wsId, sessionAsr);
 
         // Start ASR and subscribe to results
         sessionAsr.start()
-                .doOnSubscribe(s -> log.info("[{}] ASR subscribed, connecting to DashScope...", sessionId))
+                .doOnSubscribe(s -> log.info("[{}] ASR subscribed, connecting to DashScope...", wsId))
                 .subscribe(
                         result -> handleAsrResult(session, result),
                         error -> {
-                            log.error("[{}] ASR stream error", sessionId, error);
+                            log.error("[{}] ASR stream error", wsId, error);
                             sendTextSafely(session, new VoiceError("ASR_ERROR", error.getMessage()));
                         },
-                        () -> log.info("[{}] ASR stream onComplete", sessionId)
+                        () -> log.info("[{}] ASR stream onComplete", wsId)
                 );
     }
 
@@ -105,11 +140,11 @@ public class VoiceWebSocketHandler extends AbstractWebSocketHandler {
     }
 
     /**
-     * Process ASR recognition results and trigger TTS on sentence end.
+     * Process ASR recognition results and trigger Orchestrator → TTS on sentence end.
      */
     private void handleAsrResult(WebSocketSession session, RecognitionResult result) {
         String text = result.getSentence().getText();
-        String sid = session.getId();
+        String wsId = session.getId();
 
         if (!result.isSentenceEnd()) {
             if (text != null && !text.isEmpty()) {
@@ -119,25 +154,55 @@ public class VoiceWebSocketHandler extends AbstractWebSocketHandler {
         }
 
         // Sentence end
-        log.info("[{}] ASR sentence-end: text={}", sid, text);
+        log.info("[{}] ASR sentence-end: text={}", wsId, text);
         sendTextSafely(session, new AsrFinalResult(text));
 
-        // TODO: Agent integration — replace echo with agent response
-        String agentText = "我是Agent, 我将重复你说的话:" + text;
+        String bizSessionId = (String) session.getAttributes().get(VoiceHandshakeInterceptor.ATTR_SESSION_ID);
+        Long userId = (Long) session.getAttributes().get(VoiceHandshakeInterceptor.ATTR_USER_ID);
 
-        log.info("[{}] TTS starting for text length={}", sid, agentText.length());
+        EmotionResult reply;
+        try {
+            reply = orchestratorService.handle(bizSessionId, userId, text);
+        } catch (Exception e) {
+            log.error("[{}] Orchestrator handle failed for bizSessionId={}, userId={} — falling back",
+                    wsId, bizSessionId, userId, e);
+            sendTextSafely(session, new VoiceError("AGENT_ERROR", e.getMessage()));
+            // Fallback: still drive TTS with a soothing prompt so the channel is not silent.
+            speak(session, FALLBACK_REPLY);
+            return;
+        }
+
+        // Publish display blocks BEFORE audio so the UI can render cards while
+        // the user hears the spoken reply.
+        sendTextSafely(session, new AgentDisplay(
+                reply.displayBlocks() == null ? List.of() : reply.displayBlocks()));
+
+        speak(session, reply.speechText());
+    }
+
+    /**
+     * Stream a TTS reply. Emits AgentStatus("done") on completion or VoiceError on failure.
+     */
+    private void speak(WebSocketSession session, String agentText) {
+        String wsId = session.getId();
+        if (agentText == null || agentText.isBlank()) {
+            log.warn("[{}] Empty TTS text, skipping synthesis", wsId);
+            sendTextSafely(session, new AgentStatus("done"));
+            return;
+        }
+        log.info("[{}] TTS starting for text length={}", wsId, agentText.length());
         ttsService.synthesize(agentText)
-                .doOnSubscribe(s -> log.info("[{}] TTS subscribed, connecting to DashScope...", sid))
-                .doOnNext(frame -> log.debug("[{}] TTS frame: {} bytes", sid, frame.length))
-                .doOnComplete(() -> log.info("[{}] TTS flow complete, sending done", sid))
+                .doOnSubscribe(s -> log.info("[{}] TTS subscribed, connecting to DashScope...", wsId))
+                .doOnNext(frame -> log.debug("[{}] TTS frame: {} bytes", wsId, frame.length))
+                .doOnComplete(() -> log.info("[{}] TTS flow complete, sending done", wsId))
                 .subscribe(
                         pcmFrame -> sendBinarySafely(session, pcmFrame),
                         error -> {
-                            log.error("[{}] TTS synthesis error", sid, error);
+                            log.error("[{}] TTS synthesis error", wsId, error);
                             sendTextSafely(session, new VoiceError("TTS_ERROR", error.getMessage()));
                         },
                         () -> {
-                            log.info("[{}] Sending AgentStatus done", sid);
+                            log.info("[{}] Sending AgentStatus done", wsId);
                             sendTextSafely(session, new AgentStatus("done"));
                         }
                 );

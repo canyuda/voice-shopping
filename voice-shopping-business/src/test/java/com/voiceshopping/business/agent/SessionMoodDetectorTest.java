@@ -24,11 +24,11 @@ class SessionMoodDetectorTest {
     }
 
     private static ShortTermMemory.Turn assistant(String content) {
-        return new ShortTermMemory.Turn("ASSISTANT", content, 1, "EmotionAgent", Instant.EPOCH);
+        return new ShortTermMemory.Turn("ASSISTANT", content, "EmotionAgent", Instant.EPOCH);
     }
 
     private static ShortTermMemory.Turn user(String content) {
-        return new ShortTermMemory.Turn("USER", content, 0, null, Instant.EPOCH);
+        return new ShortTermMemory.Turn("USER", content, null, Instant.EPOCH);
     }
 
     private String detect(String utterance, List<ShortTermMemory.Turn> history) {

@@ -8,7 +8,6 @@ import org.springframework.stereotype.Service;
 
 import java.time.Instant;
 import java.util.List;
-import java.util.UUID;
 
 /**
  * Session lifecycle management.
@@ -28,8 +27,10 @@ public class SessionService {
     /**
      * Get an existing session or create a new one. Idempotent — safe to call
      * multiple times with the same sessionId (e.g. WebSocket reconnection).
+     * The {@code sessionId} is opaque to the system; clients bring their own
+     * (≤64 chars) — UUIDs, "sess-xyz", etc. all work.
      */
-    public Session getOrCreate(UUID sessionId, Long merchantId, Long userId, String channel) {
+    public Session getOrCreate(String sessionId, Long merchantId, Long userId, String channel) {
         return sessionRepository.findById(sessionId).orElseGet(() -> {
             Session session = new Session();
             session.setId(sessionId);

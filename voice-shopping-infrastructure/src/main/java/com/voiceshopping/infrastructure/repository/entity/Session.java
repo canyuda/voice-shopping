@@ -4,11 +4,8 @@ import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
 import jakarta.persistence.Id;
 import jakarta.persistence.Table;
-import org.hibernate.annotations.JdbcTypeCode;
-import org.hibernate.type.SqlTypes;
 
 import java.time.Instant;
-import java.util.UUID;
 
 /**
  * JPA entity for the {@code session} table.
@@ -19,8 +16,8 @@ import java.util.UUID;
 public class Session {
 
     @Id
-    @Column(name = "id", nullable = false)
-    private UUID id;
+    @Column(name = "id", length = 64, nullable = false)
+    private String id;
 
     @Column(name = "merchant_id")
     private Long merchantId;
@@ -29,9 +26,11 @@ public class Session {
     private Long userId;
 
     @Column(nullable = false)
+    /** allowed: HOME_ENTRY / PRODUCT_PAGE / SEARCH_FALLBACK */
     private String channel = "HOME_ENTRY";
 
     @Column
+    /** allowed: ORDERED / ABANDONED / FOLLOWUP; null means session not yet ended */
     private String outcome;
 
     @Column(name = "total_tokens", nullable = false)
@@ -54,8 +53,8 @@ public class Session {
 
     // --- Getters & Setters ---
 
-    public UUID getId() { return id; }
-    public void setId(UUID id) { this.id = id; }
+    public String getId() { return id; }
+    public void setId(String id) { this.id = id; }
 
     public Long getMerchantId() { return merchantId; }
     public void setMerchantId(Long merchantId) { this.merchantId = merchantId; }

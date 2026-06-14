@@ -10,7 +10,6 @@ import org.hibernate.type.SqlTypes;
 import java.time.Instant;
 import java.util.HashMap;
 import java.util.Map;
-import java.util.UUID;
 
 /**
  * JPA entity for the {@code session_state} table.
@@ -21,14 +20,15 @@ import java.util.UUID;
 public class SessionState {
 
     @Id
-    @Column(name = "id", nullable = false)
-    private UUID id;
+    @Column(name = "id", length = 64, nullable = false)
+    private String id;
 
-    @Column(name = "merchant_id", nullable = false)
+    @Column(name = "merchant_id")
     private Long merchantId;
 
     @Column(nullable = false)
-    private String phase = "IDLE";
+    /** allowed: INTENT / CLARIFY / RECOMMEND / ORDER_CONFIRM / ENDED */
+    private String phase = "INTENT";
 
     @Column(name = "current_intent")
     private String currentIntent;
@@ -55,8 +55,8 @@ public class SessionState {
 
     // --- Getters & Setters ---
 
-    public UUID getId() { return id; }
-    public void setId(UUID id) { this.id = id; }
+    public String getId() { return id; }
+    public void setId(String id) { this.id = id; }
 
     public Long getMerchantId() { return merchantId; }
     public void setMerchantId(Long merchantId) { this.merchantId = merchantId; }

@@ -10,7 +10,6 @@ import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.stereotype.Service;
 
 import java.util.Optional;
-import java.util.UUID;
 
 /**
  * SessionState read/write with dual-write: PG as source of truth, Redis as hot cache.
@@ -38,8 +37,8 @@ public class SessionStateService {
     /**
      * Load session state. Redis-first with PG fallback.
      */
-    public Optional<SessionState> load(UUID sessionId) {
-        String key = RedisKeys.sessionState(sessionId.toString());
+    public Optional<SessionState> load(String sessionId) {
+        String key = RedisKeys.sessionState(sessionId);
 
         // Try Redis first
         try {
@@ -72,7 +71,7 @@ public class SessionStateService {
         SessionState saved = repository.save(state);
 
         // Redis write (best effort)
-        String key = RedisKeys.sessionState(saved.getId().toString());
+        String key = RedisKeys.sessionState(saved.getId());
         writeToRedis(key, saved);
 
         return saved;

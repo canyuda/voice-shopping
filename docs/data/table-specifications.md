@@ -179,7 +179,7 @@
 | merchant_id | BIGINT | 是 | | 关联 merchant | 租户隔离（平台入口可为 NULL，商家入口必填） |
 | user_id | BIGINT | 否 | | 关联 app_user | 发起用户 |
 | channel | VARCHAR(25) | 否 | 'HOME_ENTRY' | CHECK IN (HOME_ENTRY/PRODUCT_PAGE/SEARCH_FALLBACK) | 入口场景 |
-| outcome | VARCHAR(20) | 是 | | CHECK IN (RECOMMENDATION/ORDER/FAQ_ANSWERED/CHITCHAT/FOLLOWUP/ABANDONED/ERROR) | 会话结局 |
+| outcome | VARCHAR(20) | 是 | | CHECK IN (ORDERED/ABANDONED/FOLLOWUP) | 会话结局；null 表示未结束 |
 | total_tokens | INT | 否 | 0 | | 消耗 LLM token 数，用于成本统计 |
 | bound_product_id | BIGINT | 是 | | 关联 product | 入口绑定的商品（PRODUCT_PAGE 场景） |
 | started_at | TIMESTAMPTZ | 否 | now() | | 开始时间 |
@@ -214,7 +214,7 @@
 |------|------|------|--------|------|------|
 | id | UUID | 否 | | 主键, 关联 session | 与 session 1:1 共享主键 |
 | merchant_id | BIGINT | 否 | | 关联 merchant | 租户隔离 |
-| phase | VARCHAR(32) | 否 | 'IDLE' | CHECK IN (IDLE/INTENT_PARSED/CLARIFYING/READY_TO_RECOMMEND/GENERATING_SPEECH/ORDER_CONFIRMING) | 状态机阶段 |
+| phase | VARCHAR(32) | 否 | 'INTENT' | CHECK IN (INTENT/CLARIFY/RECOMMEND/ORDER_CONFIRM/ENDED) | 状态机阶段 |
 | current_intent | VARCHAR(32) | 是 | | | 当前识别的意图 |
 | slots | JSONB | 否 | '{}' | | 累积槽位，如 `{"category":"跑鞋","budget":500}` |
 | pending_ask | TEXT | 是 | | | ClarifyAgent 待问问题 |

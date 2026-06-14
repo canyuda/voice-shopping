@@ -75,7 +75,7 @@ throw new BusinessException(400, "参数错误");
 4 个 Worker Agent + 1 个手写 Orchestrator 状态机，详见 `docs/data/agent-dto-specifications.md`。
 
 ```
-Orchestrator 状态机: IDLE → INTENT_PARSED → CLARIFYING → READY_TO_RECOMMEND → GENERATING_SPEECH → IDLE
+Orchestrator 状态机: INTENT → CLARIFY → RECOMMEND → ORDER_CONFIRM → ENDED
 ```
 
 意图分支路由：

@@ -45,6 +45,12 @@ public class SqlFilterBuilder {
             params.add(b.doubleValue());
         }
 
+        Object priceMin = slots.get("priceMin");
+        if (priceMin instanceof Number n) {
+            clauses.add("price >= ?");
+            params.add(n.doubleValue());
+        }
+
         Object brand = slots.get("brand");
         if (brand instanceof String b && !b.isBlank()) {
             clauses.add("attributes @> CAST(? AS jsonb)");
@@ -72,9 +78,19 @@ public class SqlFilterBuilder {
         // 排除上一轮已推过的商品，避免"换一款/便宜点"的时候又把同一批推回来
         Object exclude = slots.get("excludeProductIds");
         if (exclude instanceof Collection<?> c && !c.isEmpty()) {
-            String placeholders = String.join(", ", Collections.nCopies(c.size(), "?"));
-            clauses.add("id NOT IN (" + placeholders + ")");
-            params.addAll(c);
+            // Coerce Number → long: JSON deserialization may yield Integer for ids
+            // that fit in 32 bits, but product.id is a BIGINT column.
+            List<Long> ids = new ArrayList<>(c.size());
+            for (Object o : c) {
+                if (o instanceof Number n) {
+                    ids.add(n.longValue());
+                }
+            }
+            if (!ids.isEmpty()) {
+                String placeholders = String.join(", ", Collections.nCopies(ids.size(), "?"));
+                clauses.add("id NOT IN (" + placeholders + ")");
+                params.addAll(ids);
+            }
         }
 
         // Remaining unknown keys → JSONB containment

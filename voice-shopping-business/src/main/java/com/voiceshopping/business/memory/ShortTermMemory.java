@@ -48,14 +48,15 @@ public class ShortTermMemory {
      *
      * @param role      USER / ASSISTANT / SYSTEM
      * @param content   the text content of this turn
-     * @param turn      sequential turn number within the session
-     * @param agent     which agent produced this turn (e.g. "IntentAgent"), null for USER turns
+     * @param agent     which agent / intent produced this turn — null for USER turns;
+     *                  for ASSISTANT turns this is the {@code IntentEnum.name()} of
+     *                  the final (post-revision) intent driving the reply
      * @param timestamp when this turn was created
      */
+    @com.fasterxml.jackson.annotation.JsonIgnoreProperties(ignoreUnknown = true)
     public record Turn(
             String role,
             String content,
-            int turn,
             String agent,
             Instant timestamp
     ) {

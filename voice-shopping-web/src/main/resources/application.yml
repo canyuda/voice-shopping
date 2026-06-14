@@ -74,6 +74,22 @@ voice-shopping:
     tts:
       model: ${VOICE_TTS_MODEL:cosyvoice-v1}
       voice: ${VOICE_TTS_VOICE:longwan}
+  perspective:
+    enabled: true
+  compliance:
+    # 绝对化用词替换。key=违规词，value=合规替代。
+    # 顺序重要：长串放前面（"最便宜" 必须先于 "便宜" 命中），LinkedHashMap 保留顺序。
+    absolute-claim-patterns:
+      最便宜: 性价比高
+      最划算: 比较划算
+      最好: 比较好
+      第一: 表现突出
+      唯一: 少有
+      百分百: 较高比例
+      100%: 较高比例
+      包治百病: 适合多数情况
+      绝对: 通常
+      永远: 长期
 
 logging:
   level:
@@ -86,3 +102,16 @@ spring-ai:
     chat:
       options:
         model: qwen-max
+
+# Actuator — expose Prometheus scrape endpoint and basic health
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,prometheus
+  endpoint:
+    health:
+      show-details: when_authorized
+  metrics:
+    tags:
+      application: ${spring.application.name}
