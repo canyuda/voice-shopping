@@ -97,4 +97,17 @@ public final class RedisKeys {
     public static String scope(String sessionId) {
         return SCOPE + sessionId;
     }
+
+    // ------------------------------------------------------------------
+    // Pending order: vs:pending_order:{sessionId}
+    // Type: String (JSON PendingOrder) | TTL: configurable (default 10min)
+    // Source: OrderService.preview, removed by confirm/cancel
+    // Consumer: OrchestratorService#handleOrderConfirm, OrderService#confirm
+    // ------------------------------------------------------------------
+
+    private static final String PENDING_ORDER = PREFIX + "pending_order:";
+
+    public static String pendingOrder(String sessionId) {
+        return PENDING_ORDER + sessionId;
+    }
 }

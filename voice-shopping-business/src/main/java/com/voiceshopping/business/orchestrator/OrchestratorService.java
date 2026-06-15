@@ -9,6 +9,9 @@ import com.voiceshopping.business.compliance.ComplianceChecker;
 import com.voiceshopping.business.event.VoiceEventPublisher;
 import com.voiceshopping.business.memory.ShortTermMemory;
 import com.voiceshopping.business.memory.TurnSummarizer;
+import com.voiceshopping.business.order.OrderReferenceResolver;
+import com.voiceshopping.business.order.OrderService;
+import com.voiceshopping.business.order.PendingOrderStore;
 import com.voiceshopping.business.perspective.PerspectiveHubService;
 import com.voiceshopping.business.rec.ParallelRecommendService;
 import com.voiceshopping.business.session.SessionStateService;
@@ -18,10 +21,12 @@ import com.voiceshopping.common.dto.agent.IntentResult;
 import com.voiceshopping.common.dto.agent.LastRecommendationsSnapshot;
 import com.voiceshopping.common.dto.agent.RecommendResult;
 import com.voiceshopping.common.dto.agent.RecommendedItem;
+import com.voiceshopping.common.dto.order.PendingOrder;
 import com.voiceshopping.common.enums.IntentEnum;
 import com.voiceshopping.common.event.UserSpokenEvent;
 import com.voiceshopping.common.exception.NotFoundException;
 import com.voiceshopping.infrastructure.repository.SessionRepository;
+import com.voiceshopping.infrastructure.repository.entity.OrderRecord;
 import com.voiceshopping.infrastructure.repository.entity.Session;
 import com.voiceshopping.infrastructure.repository.entity.SessionState;
 import io.micrometer.core.instrument.MeterRegistry;
@@ -37,6 +42,7 @@ import java.util.EnumMap;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 
 /**
  * Conversation orchestrator — single entry point that wires together
@@ -73,6 +79,25 @@ public class OrchestratorService {
     private static final String OUT_OF_SCOPE_REPLY =
             "只负责帮你挑商品，这个问题回头可以找客服处理哈。我们继续聊想买什么？";
 
+    /** Order confirmation phrases — order matters for clarity, not matching. */
+    private static final List<String> NO_PHRASES = List.of(
+            "不要", "不行", "不用", "算了", "取消", "等等", "再想想", "先不", "别下");
+    private static final List<String> YES_PHRASES = List.of(
+            "确认", "下单吧", "就要这个", "就这", "可以", "OK", "ok", "买了", "嗯就这");
+
+    private static final String ORDER_REPLY_ASK_REFERENCE =
+            "你想要的是刚才推荐的哪一款？可以说第一款、第二款或者商品名。";
+    private static final String ORDER_REPLY_PREVIEW_TEMPLATE =
+            "好，帮你准备下单：%s，¥%s，一共 %s 元。确认下单吗？";
+    private static final String ORDER_REPLY_CONFIRM_TEMPLATE =
+            "下单成功，订单尾号 %s，1-2 天送达。还有想看的吗？";
+    private static final String ORDER_REPLY_CANCEL =
+            "好的，鸡哥没给你下。想再聊点别的还是换款看看？";
+    private static final String ORDER_REPLY_AMBIGUOUS =
+            "那你是确认要这款还是不要？";
+    private static final String ORDER_REPLY_STOCK_GONE =
+            "不好意思，刚才那件被抢走了，要不要看看类似的？";
+
     // --- Dependencies (D1~D11) ---
     private final SessionRepository sessionRepository;
     private final SessionStateService sessionStateService;
@@ -87,8 +112,12 @@ public class OrchestratorService {
     private final ComplianceChecker complianceChecker;
     private final ObjectMapper objectMapper;
     private final TurnSummarizer turnSummarizer;
+    private final OrderService orderService;
+    private final PendingOrderStore pendingOrderStore;
+    private final OrderReferenceResolver referenceResolver;
 
     private final boolean perspectiveEnabled;
+    private final boolean orderEnabled;
 
     /** Pre-built timers per intent — avoid Timer.builder allocation on every call. */
     private final Map<IntentEnum, Timer> timersByIntent;
@@ -106,8 +135,12 @@ public class OrchestratorService {
                                ComplianceChecker complianceChecker,
                                ObjectMapper objectMapper,
                                TurnSummarizer turnSummarizer,
+                               OrderService orderService,
+                               PendingOrderStore pendingOrderStore,
+                               OrderReferenceResolver referenceResolver,
                                MeterRegistry meterRegistry,
-                               @Value("${voice-shopping.perspective.enabled:false}") boolean perspectiveEnabled) {
+                               @Value("${voice-shopping.perspective.enabled:false}") boolean perspectiveEnabled,
+                               @Value("${voice-shopping.order.enabled:true}") boolean orderEnabled) {
         this.sessionRepository = sessionRepository;
         this.sessionStateService = sessionStateService;
         this.shortTermMemory = shortTermMemory;
@@ -121,7 +154,11 @@ public class OrchestratorService {
         this.complianceChecker = complianceChecker;
         this.objectMapper = objectMapper;
         this.turnSummarizer = turnSummarizer;
+        this.orderService = orderService;
+        this.pendingOrderStore = pendingOrderStore;
+        this.referenceResolver = referenceResolver;
         this.perspectiveEnabled = perspectiveEnabled;
+        this.orderEnabled = orderEnabled;
 
         // Pre-build one Timer per IntentEnum so finally-block lookup is O(1) (D13).
         this.timersByIntent = new EnumMap<>(IntentEnum.class);
@@ -131,7 +168,8 @@ public class OrchestratorService {
                     .register(meterRegistry);
             this.timersByIntent.put(intent, timer);
         }
-        log.info("OrchestratorService initialized: perspectiveEnabled={}", perspectiveEnabled);
+        log.info("OrchestratorService initialized: perspectiveEnabled={}, orderEnabled={}",
+                perspectiveEnabled, orderEnabled);
     }
 
     /**
@@ -159,6 +197,25 @@ public class OrchestratorService {
             SessionState state = sessionStateService.load(sessionId)
                     .orElseGet(() -> initialState(sessionId, session.getMerchantId()));
 
+            // 3.5 Phase short-circuit — if we are mid order-confirm, skip IntentService
+            //     entirely. handleOrderConfirm returns null only when the pending order
+            //     has expired AND the user's utterance can't be resolved to a prior
+            //     recommendation; in that case we revert phase=RECOMMEND and fall
+            //     through to the normal intent pipeline so the user is not stuck.
+            if (orderEnabled && SessionPhase.ORDER_CONFIRM.equals(state.getPhase())) {
+                BranchOutcome shortCircuit = handleOrderConfirm(sessionId, userId, state, utterance);
+                if (shortCircuit != null) {
+                    finalIntent = IntentEnum.ORDER_CONFIRM;
+                    return finalizeTurn(sessionId, userId, utterance, state, finalIntent,
+                            state.getSlots(), shortCircuit);
+                }
+                log.info("Order pending expired and reference unresolved for session={} — reverting phase to RECOMMEND",
+                        sessionId);
+                state.setPhase(SessionPhase.RECOMMEND);
+                // Do NOT persist here: the regular pipeline below will overwrite phase
+                // based on its own outcome. Persisting twice would be wasted Redis I/O.
+            }
+
             // 4. Intent classification
             IntentResult intent = intentService.classify(sessionId, utterance);
             log.info("Intent classified for session={}: {} (confidence={})",
@@ -173,29 +230,42 @@ public class OrchestratorService {
             //    carrying EmotionResult + branch-specific writeback markers)
             BranchOutcome outcome = dispatch(sessionId, userId, utterance, state, revised);
 
-            // 7. Compliance pass-through (placeholder)
-            EmotionResult safeReply = complianceChecker.ensureCompliant(sessionId, userId, outcome.reply());
-
-            // 8. Append ASSISTANT turn — agent tag carries the final (post-revision)
-            //    intent name so downstream consumers can attribute replies.
-            Instant now = Instant.now();
-            shortTermMemory.append(sessionId, new ShortTermMemory.Turn(
-                    "ASSISTANT", safeReply.speechText(), finalIntent.name(), now));
-
-            // 9. Append TURN summary — compact one-line view of this completed turn,
-            //    feeding next-turn IntentService.recent(3). Replaces the previous USER
-            //    raw entry to avoid double-counting in the recent window.
-            String summary = turnSummarizer.summarize(utterance, finalIntent, safeReply.speechText());
-            shortTermMemory.append(sessionId, new ShortTermMemory.Turn(
-                    "TURN", summary, finalIntent.name(), now));
-
-            // 10. Persist final session_state
-            persistState(state, finalIntent, revised.mergedSlots(), outcome);
-
-            return safeReply;
+            return finalizeTurn(sessionId, userId, utterance, state, finalIntent,
+                    revised.mergedSlots(), outcome);
         } finally {
             sample.stop(timersByIntent.get(finalIntent));
         }
+    }
+
+    /**
+     * Shared post-dispatch tail: compliance pass, ASSISTANT/TURN memory append,
+     * session_state writeback. Extracted so the order-phase short-circuit and
+     * the regular dispatch path go through the same plumbing — same Timer tag
+     * semantics, same memory writes, same persistence ordering.
+     */
+    private EmotionResult finalizeTurn(String sessionId, Long userId, String utterance,
+                                       SessionState state, IntentEnum finalIntent,
+                                       Map<String, Object> mergedSlots, BranchOutcome outcome) {
+        // 7. Compliance pass-through (placeholder)
+        EmotionResult safeReply = complianceChecker.ensureCompliant(sessionId, userId, outcome.reply());
+
+        // 8. Append ASSISTANT turn — agent tag carries the final (post-revision)
+        //    intent name so downstream consumers can attribute replies.
+        Instant now = Instant.now();
+        shortTermMemory.append(sessionId, new ShortTermMemory.Turn(
+                "ASSISTANT", safeReply.speechText(), finalIntent.name(), now));
+
+        // 9. Append TURN summary — compact one-line view of this completed turn,
+        //    feeding next-turn IntentService.recent(3). Replaces the previous USER
+        //    raw entry to avoid double-counting in the recent window.
+        String summary = turnSummarizer.summarize(utterance, finalIntent, safeReply.speechText());
+        shortTermMemory.append(sessionId, new ShortTermMemory.Turn(
+                "TURN", summary, finalIntent.name(), now));
+
+        // 10. Persist final session_state
+        persistState(state, finalIntent, mergedSlots, outcome);
+
+        return safeReply;
     }
 
     // ----------------------------------------------------------------------
@@ -261,7 +331,7 @@ public class OrchestratorService {
             case PRODUCT_RECOMMENDATION -> runRecommendation(sessionId, userId, utterance, revised.mergedSlots());
             case CLARIFY_NEEDED         -> runClarify(sessionId, userId, utterance, revised.mergedSlots());
             case PRODUCT_COMPARE        -> runCompare(sessionId, userId, utterance, state, revised.mergedSlots());
-            case ORDER_CONFIRM          -> runOrderConfirm();
+            case ORDER_CONFIRM          -> runOrderConfirm(sessionId, userId, state, utterance);
             case CHITCHAT               -> runChitchat(sessionId, utterance);
             case OUT_OF_SCOPE           -> runOutOfScope();
         };
@@ -342,12 +412,159 @@ public class OrchestratorService {
         return new BranchOutcome(reply, SessionPhase.RECOMMEND, null, rec.items());
     }
 
-    BranchOutcome runOrderConfirm() {
+    BranchOutcome runOrderConfirm(String sessionId, Long userId, SessionState state, String utterance) {
+        if (!orderEnabled) {
+            // Rollback fallback — keep the legacy placeholder for the
+            // toggle-off path, no Redis / DB writes happen.
+            return new BranchOutcome(
+                    new EmotionResult(ORDER_CONFIRM_REPLY, List.of()),
+                    SessionPhase.ORDER_CONFIRM,
+                    null,
+                    null);
+        }
+        BranchOutcome outcome = handleOrderConfirm(sessionId, userId, state, utterance);
+        if (outcome != null) {
+            return outcome;
+        }
+        // First-turn ORDER_CONFIRM with no resolvable reference (state.lastRecommendations
+        // empty or utterance unrelated) — ask EmotionAgent to clarify which item,
+        // staying in ORDER_CONFIRM so the next turn keeps the short-circuit path.
         return new BranchOutcome(
-                new EmotionResult(ORDER_CONFIRM_REPLY, List.of()),
+                new EmotionResult(ORDER_REPLY_ASK_REFERENCE, List.of()),
                 SessionPhase.ORDER_CONFIRM,
-                null,
+                ORDER_REPLY_ASK_REFERENCE,
                 null);
+    }
+
+    /**
+     * Order-confirm sub state machine.
+     * <p>
+     * Returns {@code null} only when there is no pending order AND the user's
+     * utterance can't be resolved to a product from {@code lastRecommendations} —
+     * the caller (handle's short-circuit branch) interprets this as
+     * "pending expired, fall through to normal intent classification".
+     * <p>
+     * Every other path returns a populated {@link BranchOutcome}: confirm
+     * success, cancel, ambiguous re-prompt, stock-gone friendly fallback,
+     * or new preview.
+     */
+    BranchOutcome handleOrderConfirm(String sessionId, Long userId, SessionState state, String utterance) {
+        PendingOrder pending = pendingOrderStore.get(sessionId);
+
+        if (pending != null) {
+            // NO check first — "好像不太对" must NOT count as a YES.
+            if (containsNo(utterance)) {
+                orderService.cancel(sessionId);
+                return new BranchOutcome(
+                        new EmotionResult(ORDER_REPLY_CANCEL, List.of()),
+                        SessionPhase.RECOMMEND,
+                        null,
+                        null);
+            }
+            if (containsYes(utterance)) {
+                try {
+                    OrderRecord order = orderService.confirm(sessionId);
+                    String tail = order.getOrderNo() == null
+                            ? "------"
+                            : order.getOrderNo().substring(0, Math.min(6, order.getOrderNo().length()));
+                    String reply = String.format(ORDER_REPLY_CONFIRM_TEMPLATE, tail);
+                    return new BranchOutcome(
+                            new EmotionResult(reply, List.of()),
+                            SessionPhase.ENDED,
+                            null,
+                            null);
+                } catch (IllegalStateException e) {
+                    // Stock drained between preview and confirm — friendly fallback;
+                    // preview is implicitly invalidated by the failed decrement, so
+                    // we also remove the Redis pending entry to avoid the user being
+                    // looped on a permanently-failing confirm.
+                    if ("库存不足".equals(e.getMessage())) {
+                        log.info("confirm fell through due to stock exhaustion: sessionId={}", sessionId);
+                        orderService.cancel(sessionId);
+                        return new BranchOutcome(
+                                new EmotionResult(ORDER_REPLY_STOCK_GONE, List.of()),
+                                SessionPhase.RECOMMEND,
+                                null,
+                                null);
+                    }
+                    throw e;
+                }
+            }
+            // Neither yes nor no — re-ask without changing phase.
+            return new BranchOutcome(
+                    new EmotionResult(ORDER_REPLY_AMBIGUOUS, List.of()),
+                    SessionPhase.ORDER_CONFIRM,
+                    ORDER_REPLY_AMBIGUOUS,
+                    null);
+        }
+
+        // No pending: try to resolve a reference from the last recommendations.
+        LastRecommendationsSnapshot snap = readLastRecommendations(state);
+        if (snap == null) {
+            return null;
+        }
+        Optional<Long> pidOpt = referenceResolver.resolve(snap, utterance);
+        if (pidOpt.isEmpty()) {
+            return null;
+        }
+
+        try {
+            PendingOrder po = orderService.preview(sessionId, userId, pidOpt.get(), 1);
+            String reply = String.format(ORDER_REPLY_PREVIEW_TEMPLATE,
+                    po.productName(), po.unitPrice().toPlainString(), po.totalAmount().toPlainString());
+            return new BranchOutcome(
+                    new EmotionResult(reply, List.of()),
+                    SessionPhase.ORDER_CONFIRM,
+                    reply,
+                    null);
+        } catch (IllegalStateException e) {
+            // Stock unavailable at preview time — encourage the user to look elsewhere.
+            if ("库存不足".equals(e.getMessage())) {
+                return new BranchOutcome(
+                        new EmotionResult(ORDER_REPLY_STOCK_GONE, List.of()),
+                        SessionPhase.RECOMMEND,
+                        null,
+                        null);
+            }
+            throw e;
+        }
+    }
+
+    /**
+     * Match a user utterance against the negative-confirmation phrase list.
+     * Single-character markers like "好" / "对" are deliberately NOT in
+     * {@link #YES_PHRASES} — too high false-positive rate ("好像不太对").
+     */
+    boolean containsNo(String utterance) {
+        if (utterance == null) {
+            return false;
+        }
+        for (String phrase : NO_PHRASES) {
+            if (utterance.contains(phrase)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /**
+     * Match a user utterance against the positive-confirmation phrase list.
+     * NO is checked first so "好像不太对" — which contains "好" — falls
+     * through to the negative branch.
+     */
+    boolean containsYes(String utterance) {
+        if (utterance == null) {
+            return false;
+        }
+        if (containsNo(utterance)) {
+            return false;
+        }
+        for (String phrase : YES_PHRASES) {
+            if (utterance.contains(phrase)) {
+                return true;
+            }
+        }
+        return false;
     }
 
     BranchOutcome runChitchat(String sessionId, String utterance) {

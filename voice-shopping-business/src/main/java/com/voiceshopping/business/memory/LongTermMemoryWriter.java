@@ -1,5 +1,6 @@
 package com.voiceshopping.business.memory;
 
+import com.voiceshopping.business.behavior.UserPurchasedEvent;
 import com.voiceshopping.business.profile.UserProfileService;
 import com.voiceshopping.business.session.SessionStateService;
 import com.voiceshopping.infrastructure.repository.UserProfileDynamicRepository;
@@ -10,6 +11,8 @@ import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.scheduling.annotation.Async;
 import org.springframework.stereotype.Component;
+import org.springframework.transaction.event.TransactionPhase;
+import org.springframework.transaction.event.TransactionalEventListener;
 
 import java.time.Instant;
 import java.util.ArrayList;
@@ -97,6 +100,33 @@ public class LongTermMemoryWriter {
         } catch (Exception e) {
             // @Async swallows exceptions silently otherwise — record full context.
             log.error("flushOnSessionEnd failed: sessionId={}, userId={}", sessionId, userId, e);
+        }
+    }
+
+    /**
+     * AFTER_COMMIT listener for {@link UserPurchasedEvent}. Triggered by
+     * {@code OrderService.confirm} once the order row is durable; a successful
+     * order is treated as the "session has ended productively" signal that
+     * justifies long-term memory writeback. Same idempotency guarantees as
+     * {@link #flushOnSessionEnd} apply — this listener is just a thin
+     * delegating shim, not a duplicate write path.
+     * <p>
+     * Skips silently when {@code event.sessionId == null} (back-office paths
+     * publishing the legacy 4-arg event still want the synchronous profile
+     * writeback in {@code UserBehaviorSink}, but no conversation flush).
+     */
+    @Async
+    @TransactionalEventListener(phase = TransactionPhase.AFTER_COMMIT)
+    public void onPurchasedFlushLongTerm(UserPurchasedEvent event) {
+        String sessionId = event.getSessionId();
+        if (sessionId == null || sessionId.isBlank()) {
+            return;
+        }
+        try {
+            doFlush(sessionId, event.getUserId());
+        } catch (Exception e) {
+            log.error("onPurchasedFlushLongTerm failed: sessionId={}, userId={}",
+                    sessionId, event.getUserId(), e);
         }
     }
 

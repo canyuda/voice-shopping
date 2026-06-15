@@ -77,6 +77,16 @@ voice-shopping:
       voice: ${VOICE_TTS_VOICE:longwan}
   perspective:
     enabled: true
+  order:
+    # Order placement flow toggle. When false, the ORDER_CONFIRM branch
+    # falls back to the legacy placeholder reply (see OrchestratorService).
+    # Provides a one-line rollback path if the flow misbehaves in prod.
+    enabled: true
+    # Pending order TTL — Redis key vs:pending_order:{sessionId}.
+    # Default 10 minutes: long enough for a normal "preview → confirm"
+    # exchange, short enough that an abandoned conversation does not
+    # tie up "soft" stock visibility for other users.
+    pending-ttl-seconds: 600
   memory:
     long-term:
       # 会话结束时把对话中提到过的品类/品牌按权重写回 user_profile_dynamic。

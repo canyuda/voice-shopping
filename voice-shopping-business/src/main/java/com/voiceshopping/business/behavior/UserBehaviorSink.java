@@ -9,6 +9,8 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.event.EventListener;
 import org.springframework.scheduling.annotation.Async;
 import org.springframework.stereotype.Component;
+import org.springframework.transaction.event.TransactionPhase;
+import org.springframework.transaction.event.TransactionalEventListener;
 
 import java.math.BigDecimal;
 import java.math.RoundingMode;
@@ -63,7 +65,7 @@ public class UserBehaviorSink {
         log.debug("View event processed for userId={}", event.getUserId());
     }
     @Async
-    @EventListener
+    @TransactionalEventListener(phase = TransactionPhase.AFTER_COMMIT)
     public void onPurchased(UserPurchasedEvent event) {
         log.debug("Processing purchase event: userId={}, category={}, brand={}, amount={}",
                 event.getUserId(), event.getCategory(), event.getBrand(), event.getAmount());

@@ -74,6 +74,14 @@ public class Product {
     private String status = "ON_SALE";
 
     /**
+     * On-hand inventory. Decremented atomically by
+     * {@link com.voiceshopping.infrastructure.repository.ProductRepository#decrementStock}
+     * — never mutate via setStock from business code on the order path.
+     */
+    @Column(nullable = false)
+    private Integer stock = 0;
+
+    /**
      * Declared as Transient — vector operations handled by JdbcTemplate.
      * Column exists in DB as vector(1024) but JPA does not map it.
      */
@@ -135,6 +143,9 @@ public class Product {
 
     public String getStatus() { return status; }
     public void setStatus(String status) { this.status = status; }
+
+    public Integer getStock() { return stock; }
+    public void setStock(Integer stock) { this.stock = stock; }
 
     public float[] getEmbedding() { return embedding; }
     public void setEmbedding(float[] embedding) { this.embedding = embedding; }

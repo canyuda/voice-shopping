@@ -9,6 +9,9 @@ import com.voiceshopping.business.compliance.ComplianceChecker;
 import com.voiceshopping.business.event.VoiceEventPublisher;
 import com.voiceshopping.business.memory.ShortTermMemory;
 import com.voiceshopping.business.memory.TurnSummarizer;
+import com.voiceshopping.business.order.OrderReferenceResolver;
+import com.voiceshopping.business.order.OrderService;
+import com.voiceshopping.business.order.PendingOrderStore;
 import com.voiceshopping.business.perspective.PerspectiveHubService;
 import com.voiceshopping.business.rec.ParallelRecommendService;
 import com.voiceshopping.business.session.SessionStateService;
@@ -72,6 +75,9 @@ class OrchestratorServiceTest {
     private ComplianceChecker complianceChecker;
     private ObjectMapper objectMapper;
     private TurnSummarizer turnSummarizer;
+    private OrderService orderService;
+    private PendingOrderStore pendingOrderStore;
+    private OrderReferenceResolver referenceResolver;
 
     @BeforeEach
     void setup() {
@@ -91,6 +97,9 @@ class OrchestratorServiceTest {
                 .thenAnswer(inv -> inv.getArgument(2));
         objectMapper = new ObjectMapper();
         turnSummarizer = new TurnSummarizer();
+        orderService = mock(OrderService.class);
+        pendingOrderStore = mock(PendingOrderStore.class);
+        referenceResolver = mock(OrderReferenceResolver.class);
 
         // Default: session exists, state is empty.
         Session session = new Session();
@@ -104,12 +113,23 @@ class OrchestratorServiceTest {
     }
 
     private OrchestratorService buildOrchestrator(boolean perspectiveEnabled) {
+        return buildOrchestrator(perspectiveEnabled, false);
+    }
+
+    /**
+     * Order-aware overload — turn the {@code voice-shopping.order.enabled}
+     * toggle on for tests that exercise the ORDER_CONFIRM phase short-circuit
+     * or the {@code handleOrderConfirm} branch. Existing tests pass {@code false}
+     * to retain the legacy placeholder reply behaviour.
+     */
+    private OrchestratorService buildOrchestrator(boolean perspectiveEnabled, boolean orderEnabled) {
         return new OrchestratorService(
                 sessionRepository, sessionStateService, shortTermMemory, voiceEventPublisher,
                 intentService, clarifyService, clarifyRuleService,
                 parallelRecommendService, perspectiveHubService, emotionService,
                 complianceChecker, objectMapper, turnSummarizer,
-                new SimpleMeterRegistry(), perspectiveEnabled);
+                orderService, pendingOrderStore, referenceResolver,
+                new SimpleMeterRegistry(), perspectiveEnabled, orderEnabled);
     }
 
     // ---------------------------------------------------------------------

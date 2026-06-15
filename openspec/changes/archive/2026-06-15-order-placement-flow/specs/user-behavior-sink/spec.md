@@ -1,10 +1,4 @@
-# user-behavior-sink
-
-## Purpose
-
-实时把用户行为事件（浏览、购买）回流到 `user_profile_dynamic`，让画像即时反映最新偏好。`UserBehaviorSink` 监听 Spring ApplicationEvent，按可配置权重累加 `category_prefs` / `brand_prefs`，维护 `purchase_count` / `avg_order_amount` / `last_purchase_at` / `recent_behavior`，并在写入 PG 后驱逐对应用户的画像缓存。`onPurchased` 走 `@TransactionalEventListener(AFTER_COMMIT) + @Async` 防止事务回滚污染画像、避免阻塞下单链路。
-
-## Requirements
+## MODIFIED Requirements
 
 ### Requirement: UserBehaviorSink event listener
 The system SHALL provide a `UserBehaviorSink` class in the business module that listens for Spring ApplicationEvent events and updates the `user_profile_dynamic` table in real time.
@@ -38,24 +32,3 @@ The system SHALL provide a `UserBehaviorSink` class in the business module that 
 #### Scenario: 旧路径 sessionId 为 null 时画像照常更新
 - **WHEN** UserPurchasedEvent 被 sessionId=null 触发（后台手工补录场景）
 - **THEN** onPurchased 正常完成画像写入，不读取 sessionId 字段，不抛 NPE
-
-### Requirement: Configurable weight values
-The system SHALL accept configuration properties for `voice-shopping.behavior.view-weight` (default 0.05) and `voice-shopping.behavior.purchase-weight` (default 0.15).
-
-#### Scenario: Custom weight configuration
-- **WHEN** `voice-shopping.behavior.view-weight=0.1` is set
-- **THEN** onViewed increments category_prefs and brand_prefs by 0.1 instead of the default 0.05
-
-### Requirement: Cache eviction after behavior update
-After successfully updating the dynamic profile in PG, `UserBehaviorSink` SHALL evict the UserProfileSnapshot cache for that userId, so subsequent loads reflect the updated data.
-
-#### Scenario: Cache evicted after view event
-- **WHEN** onViewed completes the PG update
-- **THEN** the Redis key `vs:user:profile:{userId}` is deleted
-
-### Requirement: recent_behavior bounded size
-The `recent_behavior` JSONB array SHALL be capped at a configurable maximum size (default 50 entries), with oldest entries dropped when the limit is exceeded.
-
-#### Scenario: Behavior list trimmed at capacity
-- **WHEN** a new behavior entry is appended and recent_behavior already has 50 entries
-- **THEN** the oldest entry is removed before appending, keeping the list at 50
