@@ -11,6 +11,7 @@ import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.function.Function;
 
 /**
  * Candidate retrieval helper that owns the embedding-query construction,
@@ -19,8 +20,13 @@ import java.util.Map;
  * <p>
  * Extracted from {@link RecommendOrchestrator} so that
  * {@link ParallelRecommendService} can reuse the exact same fallback semantics
- * without duplicating the logic. Behavior is byte-for-byte equivalent to the
- * original private methods on RecommendOrchestrator.
+ * without duplicating the logic.
+ * <p>
+ * <b>Scope contract:</b> the retriever itself is scope-agnostic. The orchestrator
+ * supplies a {@code Function<Map<String,Object>, Filter>} strategy to
+ * {@link #retrieve(float[], Map, Function)} so each fallback retry rebuilds the
+ * filter through the same lambda — guaranteeing scope (e.g. {@code merchant_id IN (...)})
+ * is re-merged on every relaxed retry.
  */
 @Component
 public class RecommendCandidateRetriever {
@@ -61,7 +67,11 @@ public class RecommendCandidateRetriever {
     }
 
     /**
-     * Build combined filter: generic fromSlots + running-shoe specialization.
+     * Build combined slot filter: generic fromSlots + running-shoe specialization.
+     * <p>
+     * Returns a generic (scope-unaware) filter — orchestrators are expected to
+     * compose this with a {@link com.voiceshopping.infrastructure.vector.ScopeFilterBuilder}
+     * output via {@link SqlFilterBuilder#merge(Filter, Filter)}.
      */
     public Filter buildFilter(Map<String, Object> slots) {
         Filter generic = sqlFilterBuilder.fromSlots(slots);
@@ -80,6 +90,10 @@ public class RecommendCandidateRetriever {
      * Progressive fallback: relax filter when initial retrieval returns empty.
      * Reuses queryVector — only changes SQL filter params.
      * <p>
+     * The {@code filterFn} is invoked once per attempt (initial + each fallback
+     * with modified slots) so any cross-cutting fragment composed by the caller
+     * (e.g. scope merge) is preserved across retries.
+     * <p>
      * Order:
      * <ol>
      *   <li>Original filter</li>
@@ -88,8 +102,10 @@ public class RecommendCandidateRetriever {
      * </ol>
      */
     public List<RecommendedItem> retrieve(float[] queryVector,
-                                          Filter filter,
-                                          Map<String, Object> slots) {
+                                          Map<String, Object> slots,
+                                          Function<Map<String, Object>, Filter> filterFn) {
+        Filter filter = filterFn.apply(slots);
+
         // Attempt 1: original filter
         List<RecommendedItem> candidates = candidatesService.fetchCandidates(queryVector, filter, INITIAL_TOP_N);
         if (!candidates.isEmpty()) {
@@ -98,7 +114,7 @@ public class RecommendCandidateRetriever {
         log.debug("Initial retrieval empty, trying budget relax");
 
         // Attempt 2: relax budget by +30%
-        Filter relaxedBudget = relaxBudget(slots);
+        Filter relaxedBudget = filterFn.apply(relaxBudgetSlots(slots));
         if (!relaxedBudget.equals(filter)) {
             candidates = candidatesService.fetchCandidates(queryVector, relaxedBudget, INITIAL_TOP_N);
             if (!candidates.isEmpty()) {
@@ -108,7 +124,7 @@ public class RecommendCandidateRetriever {
         log.debug("Budget-relaxed retrieval empty, trying without category_l2");
 
         // Attempt 3: drop category_l2 filter
-        Filter noCategoryL2 = dropCategoryL2(slots);
+        Filter noCategoryL2 = filterFn.apply(dropCategoryL2Slots(slots));
         if (!noCategoryL2.equals(filter)) {
             candidates = candidatesService.fetchCandidates(queryVector, noCategoryL2, INITIAL_TOP_N);
             if (!candidates.isEmpty()) {
@@ -124,24 +140,20 @@ public class RecommendCandidateRetriever {
         return category.contains("跑鞋") || category.equalsIgnoreCase("running_shoes");
     }
 
-    /**
-     * Relax budget by increasing it 30% in slots, rebuild filter.
-     */
-    private Filter relaxBudget(Map<String, Object> slots) {
+    /** Slots variant with budget bumped 30% — does not rebuild a filter. */
+    private Map<String, Object> relaxBudgetSlots(Map<String, Object> slots) {
         Map<String, Object> relaxed = new LinkedHashMap<>(slots);
         Object budget = relaxed.get("budget");
         if (budget instanceof Number n) {
             relaxed.put("budget", n.doubleValue() * BUDGET_RELAX_RATIO);
         }
-        return buildFilter(relaxed);
+        return relaxed;
     }
 
-    /**
-     * Remove categoryL2 from slots, rebuild filter.
-     */
-    private Filter dropCategoryL2(Map<String, Object> slots) {
+    /** Slots variant with categoryL2 stripped — does not rebuild a filter. */
+    private Map<String, Object> dropCategoryL2Slots(Map<String, Object> slots) {
         Map<String, Object> modified = new LinkedHashMap<>(slots);
         modified.remove("categoryL2");
-        return buildFilter(modified);
+        return modified;
     }
 }

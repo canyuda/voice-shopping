@@ -33,11 +33,20 @@ import java.util.concurrent.ConcurrentHashMap;
  * Protocol: BinaryMessage = PCM audio, TextMessage = JSON signal.
  * Pipeline: ASR → Orchestrator → TTS
  * <p>
- * The handshake interceptor lifts {@code sessionId} and {@code userId} from the
- * connect URL into session attributes; this handler reads them on connect and
- * delegates each ASR sentence-end to {@link OrchestratorService}, fanning out
- * the result as: JSON {@code agent_display} (display blocks) → streaming TTS
- * frames of {@code speechText} → JSON {@code agent_status:done}.
+ * The handshake interceptor ({@link AuthHandshakeInterceptor}) lifts
+ * {@code sessionId} from the connect URL and {@code userId} from the
+ * Sa-Token sub-protocol token into session attributes; this handler reads
+ * them on connect and delegates each ASR sentence-end to
+ * {@link OrchestratorService}, fanning out the result as: JSON
+ * {@code agent_display} (display blocks) → streaming TTS frames of
+ * {@code speechText} → JSON {@code agent_status:done}.
+ * <p>
+ * <b>Scope contract:</b> WS handshake does NOT write the
+ * {@code SessionScopeCache}. Callers SHOULD invoke
+ * {@code POST /api/v1/session/start} before opening the WS so the scope
+ * cache is primed; if they don't, downstream recommendation requests will
+ * follow the documented "scope cache miss → platform-wide" fallback (a
+ * WARN log is emitted but no exception is thrown).
  * <p>
  * If the orchestrator throws, falls back to a fixed network-hiccup TTS prompt
  * so the channel never goes silent.
@@ -79,8 +88,8 @@ public class VoiceWebSocketHandler extends AbstractWebSocketHandler {
     @Override
     public void afterConnectionEstablished(WebSocketSession session) throws Exception {
         String wsId = session.getId();
-        String bizSessionId = (String) session.getAttributes().get(VoiceHandshakeInterceptor.ATTR_SESSION_ID);
-        Long userId = (Long) session.getAttributes().get(VoiceHandshakeInterceptor.ATTR_USER_ID);
+        String bizSessionId = (String) session.getAttributes().get(AuthHandshakeInterceptor.ATTR_SESSION_ID);
+        Long userId = (Long) session.getAttributes().get(AuthHandshakeInterceptor.ATTR_USER_ID);
         log.info("WebSocket connection established: wsId={}, bizSessionId={}, userId={}",
                 wsId, bizSessionId, userId);
 
@@ -141,8 +150,8 @@ public class VoiceWebSocketHandler extends AbstractWebSocketHandler {
             sessionAsr.stop();
         }
 
-        String bizSessionId = (String) session.getAttributes().get(VoiceHandshakeInterceptor.ATTR_SESSION_ID);
-        Long userId = (Long) session.getAttributes().get(VoiceHandshakeInterceptor.ATTR_USER_ID);
+        String bizSessionId = (String) session.getAttributes().get(AuthHandshakeInterceptor.ATTR_SESSION_ID);
+        Long userId = (Long) session.getAttributes().get(AuthHandshakeInterceptor.ATTR_USER_ID);
 
         // Long-term memory writeback. ShortTermMemory acts as the idempotency gate
         // inside flushOnSessionEnd — multiple triggers (this WS close + a later
@@ -189,8 +198,8 @@ public class VoiceWebSocketHandler extends AbstractWebSocketHandler {
         log.info("[{}] ASR sentence-end: text={}", wsId, text);
         sendTextSafely(session, new AsrFinalResult(text));
 
-        String bizSessionId = (String) session.getAttributes().get(VoiceHandshakeInterceptor.ATTR_SESSION_ID);
-        Long userId = (Long) session.getAttributes().get(VoiceHandshakeInterceptor.ATTR_USER_ID);
+        String bizSessionId = (String) session.getAttributes().get(AuthHandshakeInterceptor.ATTR_SESSION_ID);
+        Long userId = (Long) session.getAttributes().get(AuthHandshakeInterceptor.ATTR_USER_ID);
 
         EmotionResult reply;
         try {

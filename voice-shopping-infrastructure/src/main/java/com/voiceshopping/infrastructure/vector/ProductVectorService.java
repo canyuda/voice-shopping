@@ -66,7 +66,7 @@ public class ProductVectorService {
             List<Object> extraParams,
             int topK) {
 
-        // TODO: add merchant_id filter for multi-tenancy
+        // merchant_id filter is supplied by callers via extraFilter (see ScopeFilterBuilder).
         // Single vector param: SELECT distance AS embedding <=> ?, ORDER BY distance.
         // Planner expands the alias back to `embedding <=> ?` ASC → hits HNSW index.
         // similarity (1 - distance) is derived in mapRow, not in SQL.

@@ -1,11 +1,15 @@
 package com.voiceshopping.business.rec;
 
 import com.voiceshopping.business.profile.UserProfileService;
+import com.voiceshopping.business.scope.SessionScopeCache;
 import com.voiceshopping.common.dto.agent.Filter;
 import com.voiceshopping.common.dto.agent.RecommendResult;
 import com.voiceshopping.common.dto.agent.RecommendedItem;
 import com.voiceshopping.common.dto.agent.UserProfileSnapshot;
+import com.voiceshopping.common.dto.session.SessionScope;
 import com.voiceshopping.infrastructure.vector.EmbeddingService;
+import com.voiceshopping.infrastructure.vector.ScopeFilterBuilder;
+import com.voiceshopping.infrastructure.vector.SqlFilterBuilder;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
@@ -14,6 +18,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionException;
+import java.util.function.Function;
 import java.util.stream.Collectors;
 
 /**
@@ -24,15 +29,12 @@ import java.util.stream.Collectors;
  * The two legs are independent:
  * <ul>
  *   <li><b>Profile leg</b>: depends only on userId.</li>
- *   <li><b>Candidates leg</b>: buildQuery → embed → buildFilter → retrieve, depends only on utterance + slots.</li>
+ *   <li><b>Candidates leg</b>: buildQuery → embed → buildFilter → retrieve, depends only on utterance + slots + scope.</li>
  * </ul>
- * After both finish, rerank → take Top K → attachReasons runs serially —
- * identical to the orchestrator.
- * <p>
- * Fallback semantics (budget +30%, drop categoryL2) are reused via
- * {@link RecommendCandidateRetriever}, so this service's results are equivalent
- * to {@link RecommendOrchestrator#recommend} on the same inputs (LLM-generated
- * reason text aside).
+ * Scope resolution and the scope-merged filter strategy run on the candidates
+ * leg so the WARN-on-miss log appears whether or not the profile leg ever
+ * resolves. After both legs finish, rerank → take Top K → attachReasons runs
+ * serially — identical to the orchestrator.
  */
 @Service
 public class ParallelRecommendService {
@@ -45,17 +47,26 @@ public class ParallelRecommendService {
     private final RecommendCandidateRetriever retriever;
     private final ProfileReranker reranker;
     private final RecommendReasonService reasonService;
+    private final SessionScopeCache scopeCache;
+    private final ScopeFilterBuilder scopeFilterBuilder;
+    private final SqlFilterBuilder sqlFilterBuilder;
 
     public ParallelRecommendService(UserProfileService profileService,
                                     EmbeddingService embeddingService,
                                     RecommendCandidateRetriever retriever,
                                     ProfileReranker reranker,
-                                    RecommendReasonService reasonService) {
+                                    RecommendReasonService reasonService,
+                                    SessionScopeCache scopeCache,
+                                    ScopeFilterBuilder scopeFilterBuilder,
+                                    SqlFilterBuilder sqlFilterBuilder) {
         this.profileService = profileService;
         this.embeddingService = embeddingService;
         this.retriever = retriever;
         this.reranker = reranker;
         this.reasonService = reasonService;
+        this.scopeCache = scopeCache;
+        this.scopeFilterBuilder = scopeFilterBuilder;
+        this.sqlFilterBuilder = sqlFilterBuilder;
     }
 
     /**
@@ -66,7 +77,8 @@ public class ParallelRecommendService {
                                      Long userId,
                                      String utterance,
                                      Map<String, Object> slots) {
-        log.info("Parallel recommendation request: userId={}, utterance={}, slots={}", userId, utterance, slots);
+        log.info("Parallel recommendation request: sessionId={}, userId={}, utterance={}, slots={}",
+                sessionId, userId, utterance, slots);
 
         CompletableFuture<UserProfileSnapshot> profileF = CompletableFuture.supplyAsync(() ->
                 userId != null ? profileService.load(userId) : null);
@@ -75,8 +87,13 @@ public class ParallelRecommendService {
             String query = retriever.buildQuery(utterance, slots);
             log.debug("Embedding query: {}", query);
             float[] queryVector = embeddingService.embed(query);
-            Filter filter = retriever.buildFilter(slots);
-            return retriever.retrieve(queryVector, filter, slots);
+
+            SessionScope scope = resolveScope(sessionId, userId);
+            Filter scopeFilter = scopeFilterBuilder.build(scope);
+            Function<Map<String, Object>, Filter> filterFn =
+                    s -> sqlFilterBuilder.merge(retriever.buildFilter(s), scopeFilter);
+
+            return retriever.retrieve(queryVector, slots, filterFn);
         });
 
         try {
@@ -101,5 +118,15 @@ public class ParallelRecommendService {
             Throwable cause = e.getCause() != null ? e.getCause() : e;
             throw new IllegalStateException("Parallel recommend failed: " + cause.getMessage(), cause);
         }
+    }
+
+    private SessionScope resolveScope(String sessionId, Long userId) {
+        if (sessionId == null) {
+            return SessionScope.platformWide(userId);
+        }
+        return scopeCache.get(sessionId).orElseGet(() -> {
+            log.warn("Scope cache miss for sessionId={}, falling back to platform-wide", sessionId);
+            return SessionScope.platformWide(userId);
+        });
     }
 }

@@ -82,4 +82,19 @@ public final class RedisKeys {
     public static String recCache(String hash) {
         return REC_CACHE + hash;
     }
+
+    // ------------------------------------------------------------------
+    // Session scope: vs:scope:{sessionId}
+    // Type: String (JSON SessionScope) | TTL: 30min (matches session-state)
+    // Source: SessionScopeCache, written by /api/v1/session/start
+    // Consumers: RecommendOrchestrator / ParallelRecommendService /
+    //            SearchController (when sessionId is provided)
+    // Cache miss falls back to platform-wide (see merchant-data-isolation).
+    // ------------------------------------------------------------------
+
+    private static final String SCOPE = PREFIX + "scope:";
+
+    public static String scope(String sessionId) {
+        return SCOPE + sessionId;
+    }
 }

@@ -1,5 +1,6 @@
 package com.voiceshopping.web.controller;
 
+import cn.dev33.satoken.exception.NotLoginException;
 import com.voiceshopping.common.dto.ApiResult;
 import com.voiceshopping.common.exception.BusinessException;
 import com.voiceshopping.common.exception.ForbiddenException;
@@ -41,6 +42,12 @@ public class GlobalExceptionHandler {
     public ResponseEntity<ApiResult<Void>> handleBadRequest(IllegalArgumentException ex) {
         return ResponseEntity.badRequest()
                 .body(ApiResult.error(HttpStatus.BAD_REQUEST.value(), ex.getMessage()));
+    }
+
+    @ExceptionHandler(NotLoginException.class)
+    public ResponseEntity<ApiResult<Void>> handleNotLogin(NotLoginException ex) {
+        return ResponseEntity.status(HttpStatus.UNAUTHORIZED)
+                .body(ApiResult.error(HttpStatus.UNAUTHORIZED.value(), "请先登录"));
     }
 
     @ExceptionHandler(Exception.class)

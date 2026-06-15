@@ -1,11 +1,15 @@
 package com.voiceshopping.business.rec;
 
 import com.voiceshopping.business.profile.UserProfileService;
+import com.voiceshopping.business.scope.SessionScopeCache;
 import com.voiceshopping.common.dto.agent.Filter;
 import com.voiceshopping.common.dto.agent.RecommendResult;
 import com.voiceshopping.common.dto.agent.RecommendedItem;
 import com.voiceshopping.common.dto.agent.UserProfileSnapshot;
+import com.voiceshopping.common.dto.session.SessionScope;
 import com.voiceshopping.infrastructure.vector.EmbeddingService;
+import com.voiceshopping.infrastructure.vector.ScopeFilterBuilder;
+import com.voiceshopping.infrastructure.vector.SqlFilterBuilder;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -14,6 +18,7 @@ import java.math.BigDecimal;
 import java.util.Collections;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertSame;
@@ -43,6 +48,9 @@ class ParallelRecommendEquivalenceTest {
     private RecommendCandidateRetriever retriever;
     private ProfileReranker reranker;
     private RecommendReasonService reasonService;
+    private SessionScopeCache scopeCache;
+    private ScopeFilterBuilder scopeFilterBuilder;
+    private SqlFilterBuilder sqlFilterBuilder;
 
     private RecommendOrchestrator serial;
     private ParallelRecommendService parallel;
@@ -54,9 +62,21 @@ class ParallelRecommendEquivalenceTest {
         retriever = mock(RecommendCandidateRetriever.class);
         reranker = mock(ProfileReranker.class);
         reasonService = mock(RecommendReasonService.class);
+        scopeCache = mock(SessionScopeCache.class);
+        scopeFilterBuilder = mock(ScopeFilterBuilder.class);
+        sqlFilterBuilder = mock(SqlFilterBuilder.class);
 
-        serial = new RecommendOrchestrator(profileService, embeddingService, retriever, reranker, reasonService);
-        parallel = new ParallelRecommendService(profileService, embeddingService, retriever, reranker, reasonService);
+        // Default: scope cache miss (platform-wide fallback path) and a no-op
+        // merge that returns the generic filter unchanged. Tests that need a
+        // different scope override these stubs.
+        when(scopeCache.get(anyString())).thenReturn(Optional.empty());
+        when(scopeFilterBuilder.build(any())).thenReturn(Filter.EMPTY);
+        when(sqlFilterBuilder.merge(any(), any())).thenAnswer(inv -> inv.getArgument(0));
+
+        serial = new RecommendOrchestrator(profileService, embeddingService, retriever,
+                reranker, reasonService, scopeCache, scopeFilterBuilder, sqlFilterBuilder);
+        parallel = new ParallelRecommendService(profileService, embeddingService, retriever,
+                reranker, reasonService, scopeCache, scopeFilterBuilder, sqlFilterBuilder);
     }
 
     private RecommendedItem item(long id, String name, double price) {
@@ -77,7 +97,7 @@ class ParallelRecommendEquivalenceTest {
         when(retriever.buildFilter(any())).thenReturn(filter);
 
         List<RecommendedItem> candidates = List.of(item(1, "A", 100), item(2, "B", 200), item(3, "C", 300), item(4, "D", 400));
-        when(retriever.retrieve(any(), eq(filter), any())).thenReturn(candidates);
+        when(retriever.retrieve(any(), any(), any())).thenReturn(candidates);
 
         // rerank returns the candidates in a deterministic order (reverse for distinctness)
         List<RecommendedItem> reranked = List.of(item(3, "C", 300), item(2, "B", 200), item(1, "A", 100), item(4, "D", 400));
@@ -172,6 +192,24 @@ class ParallelRecommendEquivalenceTest {
         verify(profileService, times(1)).load(1L);
         verify(embeddingService, times(1)).embed("x");
         verify(retriever, times(1)).retrieve(any(), any(), any());
+    }
+
+    @Test
+    @DisplayName("Scope cache hit: scopeFilterBuilder is invoked with the cached scope")
+    void scope_cacheHit_appliesScopeFilter() {
+        SessionScope scope = new SessionScope(7L, List.of(5L), null);
+        when(scopeCache.get("sess-merch")).thenReturn(Optional.of(scope));
+        when(profileService.load(anyLong())).thenReturn(null);
+        when(embeddingService.embed(anyString())).thenReturn(new float[]{0.1f});
+        when(retriever.buildQuery(anyString(), any())).thenReturn("x");
+        when(retriever.buildFilter(any())).thenReturn(new Filter("1=1", List.of()));
+        when(retriever.retrieve(any(), any(), any())).thenReturn(Collections.emptyList());
+
+        serial.recommend("sess-merch", 7L, "x", Map.of());
+        parallel.recommend("sess-merch", 7L, "x", Map.of());
+
+        // Both code paths must consult ScopeFilterBuilder with the cached scope.
+        verify(scopeFilterBuilder, times(2)).build(scope);
     }
 
     private static List<Long> extractIds(RecommendResult r) {

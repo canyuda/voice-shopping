@@ -51,6 +51,7 @@ spring:
 # Sa-Token
 sa-token:
   token-name: Authorization
+  token-prefix: Bearer
   timeout: 86400
   is-concurrent: true
   is-share: true

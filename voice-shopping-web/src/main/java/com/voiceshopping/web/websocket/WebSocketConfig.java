@@ -6,8 +6,14 @@ import org.springframework.web.socket.config.annotation.WebSocketConfigurer;
 import org.springframework.web.socket.config.annotation.WebSocketHandlerRegistry;
 
 /**
- * Registers VoiceWebSocketHandler at /ws/voice with {@link VoiceHandshakeInterceptor}
- * to lift {@code sessionId} / {@code userId} out of the connect URL.
+ * Registers {@link VoiceWebSocketHandler} at {@code /ws/voice} with
+ * {@link AuthHandshakeInterceptor}. The interceptor performs Sa-Token-based
+ * sub-protocol authentication, lifting {@code userId} (from token) and
+ * {@code sessionId} (from query) into the WS session attributes.
+ * <p>
+ * {@code supportedProtocols} is intentionally not declared on the registry —
+ * the {@code Bearer-{token}} sub-protocol pattern is verified at runtime by
+ * the interceptor and the response header is echoed back per RFC 6455.
  * Allows all origins for debugging purposes.
  */
 @Configuration
@@ -23,7 +29,7 @@ public class WebSocketConfig implements WebSocketConfigurer {
     @Override
     public void registerWebSocketHandlers(WebSocketHandlerRegistry registry) {
         registry.addHandler(voiceWebSocketHandler, "/ws/voice")
-                .addInterceptors(new VoiceHandshakeInterceptor())
+                .addInterceptors(new AuthHandshakeInterceptor())
                 .setAllowedOrigins("*");
     }
 }
