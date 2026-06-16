@@ -7,9 +7,14 @@ import com.voiceshopping.common.dto.agent.RecommendResult;
  *
  * @param utterance user's raw utterance
  * @param rec       recommendation result to wrap (caller-supplied for isolated testing)
+ * @param userNeeds slot-derived needs summary (optional, defaults to empty string)
  */
 public record EmotionDebugReq(
         String utterance,
-        RecommendResult rec
+        RecommendResult rec,
+        String userNeeds
 ) {
+    public String userNeeds() {
+        return userNeeds != null ? userNeeds : "";
+    }
 }

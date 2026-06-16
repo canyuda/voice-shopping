@@ -1,6 +1,5 @@
 package com.voiceshopping.business.agent;
 
-import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.voiceshopping.ai.agent.AgentFactory;
@@ -14,23 +13,20 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 
+import java.math.BigDecimal;
 import java.util.List;
+import java.util.Map;
 import java.util.stream.Collectors;
 import java.util.stream.IntStream;
 
 /**
- * Wraps a recommendation result into a natural spoken reply for TTS.
+ * 将推荐结果包装为自然的口语音频回复。
  * <p>
- * Pipeline: detect session mood → build a lean user message (products carry
- * only name + reason, price/attributes stripped so the LLM cannot read out
- * prices) → call the emotion agent → parse the JSON {@code { "speechText": ... }}
- * → fallback on any failure.
+ * 流程：检测会话情绪 → 构建含 userNeeds + 商品裸数据的 userMsg → 调用 EmotionAgent
+ * → 解析纯文本输出（兜底 markdown 包裹） → 失败时走 fallback。
  * <p>
- * {@code displayBlocks} always transparently passes through the full
- * {@code rec.items()}, so the frontend keeps price/attributes the voice
- * channel omits. The emotion agent's InMemoryMemory is preserved across turns
- * (not cleared) to keep conversational continuity, but trimmed to bound growth
- * since InMemoryMemory has no built-in cap.
+ * displayBlocks 始终透传完整的 rec.items()，前端保留 price/attributes 等语音通道
+ * 省略的字段。EmotionAgent 的 InMemoryMemory 跨轮保留，不做 clear。
  */
 @Service
 public class EmotionService {
@@ -53,20 +49,42 @@ public class EmotionService {
     }
 
     /**
-     * Wrap a recommendation result into a spoken reply.
+     * 将推荐结果包装为口语音频回复。
      *
-     * @param sessionId      current session id
-     * @param userUtterance  user's raw utterance
-     * @param rec            recommendation result to wrap
-     * @return EmotionResult with speechText (for TTS) and displayBlocks (for UI)
+     * @param sessionId      当前会话 id
+     * @param userUtterance  用户原始发言
+     * @param userNeeds      由 slots 转换的需求摘要（格式：key1=val1,key2=val2,...）
+     * @param rec            推荐结果
+     * @return EmotionResult，含 speechText（TTS）和 displayBlocks（UI 商品卡片）
      */
-    public EmotionResult wrap(String sessionId, String userUtterance, RecommendResult rec) {
+    public EmotionResult wrap(String sessionId, String userUtterance,
+                              String userNeeds, RecommendResult rec) {
+        long t0 = System.currentTimeMillis();
+        com.voiceshopping.business.orchestrator.AgentTraceLogger.enter("EMOTION",
+                String.format("sessionId=%s, userNeeds=%s, recItems=%d, caller=%s",
+                        sessionId, userNeeds,
+                        rec != null && rec.items() != null ? rec.items().size() : 0,
+                        callerInfo()));
+        try {
+            return wrapInternal(sessionId, userUtterance, userNeeds, rec);
+        } finally {
+            com.voiceshopping.business.orchestrator.AgentTraceLogger.exit("EMOTION",
+                    System.currentTimeMillis() - t0, "");
+        }
+    }
+
+    private EmotionResult wrapInternal(String sessionId, String userUtterance,
+                                        String userNeeds, RecommendResult rec) {
+        log.info("[EmotionService.wrap] ENTER sessionId={}, userUtterance={}, userNeeds={}, recItems={}, callStack={}",
+                sessionId, userUtterance, userNeeds,
+                rec != null && rec.items() != null ? rec.items().size() : 0,
+                callerInfo());
         String mood = moodDetector.detect(sessionId, userUtterance);
 
         ReActAgent agent = agentFactory.getEmotionAgent(sessionId);
         memoryPolicy.beforeEmotionCall(agent);
 
-        String userMsg = buildUserMsg(userUtterance, mood, rec);
+        String userMsg = buildUserMsg(userUtterance, mood, userNeeds, rec);
         log.info("[EmotionAgent] LLM request for session={}:\n{}", sessionId, userMsg);
 
         try {
@@ -93,48 +111,75 @@ public class EmotionService {
     }
 
     /**
-     * Build the JSON user message. products carry only name + reason so the
-     * LLM cannot read out prices, keeping the spoken reply compliant and lean.
+     * 构建喂给 LLM 的 JSON userMsg。
+     * products 传裸数据（含 name/price/attributes），让 EmotionAgent 基于
+     * 真实属性生成推荐理由；去掉 explanationTone，新增 userNeeds。
      */
-    String buildUserMsg(String utterance, String mood, RecommendResult rec) {
-        List<LeanProduct> products = rec.items().stream()
-                .map(item -> new LeanProduct(nullSafe(item.name()), nullSafe(item.reason())))
+    String buildUserMsg(String utterance, String mood, String userNeeds, RecommendResult rec) {
+        List<MergedProduct> products = rec.items().stream()
+                .map(item -> new MergedProduct(
+                        item.productId(),
+                        nullSafe(item.name()),
+                        item.price(),
+                        item.attributes() != null ? item.attributes() : Map.of()
+                ))
                 .toList();
         EmotionPromptInput input = new EmotionPromptInput(
-                nullSafe(utterance), nullSafe(mood), nullSafe(rec.explanationTone()), products);
+                nullSafe(utterance), nullSafe(mood), nullSafe(userNeeds), products);
         try {
             return objectMapper.writeValueAsString(input);
         } catch (JsonProcessingException e) {
-            // a plain record of strings — should never fail to serialize
+            // 纯 record 序列化不应失败
             throw new IllegalStateException("Failed to serialize emotion user message", e);
         }
     }
 
     /**
-     * Extract the first JSON object and read speechText from it.
-     * Returns null if no JSON is found or speechText is absent.
+     * 静态版本，供 EmotionStreamingService 复用 userMsg 构建逻辑。
+     */
+    static String buildUserMsgStatic(String utterance, String mood, String userNeeds,
+                                     RecommendResult rec, ObjectMapper objectMapper) {
+        List<MergedProduct> products = rec.items().stream()
+                .map(item -> new MergedProduct(
+                        item.productId(),
+                        nullSafe(item.name()),
+                        item.price(),
+                        item.attributes() != null ? item.attributes() : Map.of()
+                ))
+                .toList();
+        EmotionPromptInput input = new EmotionPromptInput(
+                nullSafe(utterance), nullSafe(mood), nullSafe(userNeeds), products);
+        try {
+            return objectMapper.writeValueAsString(input);
+        } catch (JsonProcessingException e) {
+            throw new IllegalStateException("Failed to serialize emotion user message", e);
+        }
+    }
+
+    /**
+     * 解析 EmotionAgent 的纯文本输出。
+     * 新 prompt 输出纯文本，不再有 JSON 包裹；
+     * 兜底处理模型偶发的 ```json ... ``` 包裹。
      */
     private String parseSpeech(String rawText) {
         if (rawText == null) {
             return null;
         }
-        String json = IntentService.extractJson(rawText);
-        if (json == null) {
-            return null;
-        }
-        try {
-            return objectMapper.readValue(json, SpeechJson.class).speechText();
-        } catch (JsonProcessingException e) {
-            log.warn("Failed to parse emotion speechText JSON: {}", e.getMessage());
-            return null;
-        }
+        // 去掉 markdown code fence 包裹
+        String cleaned = rawText
+                .replaceAll("^```(?:json)?\\s*", "")
+                .replaceAll("\\s*```$", "")
+                .trim();
+        // 去掉换行（prompt 约束不换行，但兜底一下）
+        cleaned = cleaned.replaceAll("[\\r\\n]+", "");
+        return cleaned.isBlank() ? null : cleaned;
     }
 
     /**
-     * Fallback spoken reply when the LLM fails or returns nothing.
-     * Empty items → gentle guidance; non-empty → list names + reasons.
+     * LLM 失败或返回空时的兜底口语回复。
+     * 无商品 → 温和引导；有商品 → 列出名称。
      */
-    static String fallback(RecommendResult rec) {
+    public static String fallback(RecommendResult rec) {
         if (rec.items() == null || rec.items().isEmpty()) {
             return "这个条件下合适的不多，要不要放宽点预算再看看？";
         }
@@ -145,33 +190,44 @@ public class EmotionService {
         return "好，给你挑了几款。\n" + body + "\n你看看选哪个？";
     }
 
-    /** Format one fallback item line: "第i款: name" or "第i款: name, reason". */
+    /** 格式化单条兜底商品行："第i款: name" */
     private static String formatItemLine(int ordinal, RecommendedItem item) {
         String name = nullSafe(item.name());
-        String reason = nullSafe(item.reason());
-        return reason.isBlank()
-                ? "第" + ordinal + "款: " + name
-                : "第" + ordinal + "款: " + name + ", " + reason;
+        return "第" + ordinal + "款: " + name;
     }
 
     private static String nullSafe(String s) {
         return s != null ? s : "";
     }
 
-    /** Lean product view fed to the LLM — name + reason only. */
-    private record LeanProduct(String name, String reason) {
+    /** 取调用栈中第一个非本类的栈帧，定位是谁调用了 wrap */
+    private static String callerInfo() {
+        StackTraceElement[] stack = Thread.currentThread().getStackTrace();
+        for (StackTraceElement el : stack) {
+            String cls = el.getClassName();
+            if (!cls.startsWith("java.lang.Thread")
+                    && !cls.equals(EmotionService.class.getName())) {
+                return cls + "." + el.getMethodName() + ":" + el.getLineNumber();
+            }
+        }
+        return "unknown";
     }
 
-    /** Serialized as the JSON user message matching emotion.txt's expected input. */
-    private record EmotionPromptInput(
-            String userUtterance,
-            String sessionMood,
-            String explanationTone,
-            List<LeanProduct> products
+    /** 喂给合并 prompt 的商品视图，含属性数据 */
+    record MergedProduct(
+            Long productId,
+            String name,
+            BigDecimal price,
+            Map<String, Object> attributes
     ) {
     }
 
-    @JsonIgnoreProperties(ignoreUnknown = true)
-    private record SpeechJson(String speechText) {
+    /** 序列化为 JSON，匹配 emotion-merged.txt 的输入格式 */
+    private record EmotionPromptInput(
+            String userUtterance,
+            String sessionMood,
+            String userNeeds,
+            List<MergedProduct> products
+    ) {
     }
 }

@@ -32,7 +32,7 @@ public class EmotionDebugController {
         if (req.rec() == null) {
             throw new IllegalArgumentException("rec must not be null");
         }
-        EmotionResult result = emotionService.wrap(sessionId, req.utterance(), req.rec());
+        EmotionResult result = emotionService.wrap(sessionId, req.utterance(), req.userNeeds(), req.rec());
         return ApiResult.ok(result);
     }
 }

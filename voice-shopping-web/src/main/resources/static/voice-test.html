@@ -7,40 +7,330 @@
 <title>Voice Shopping — 调试页</title>
 <style>
   * { box-sizing: border-box; margin: 0; padding: 0; }
-  body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; background: #1a1a2e; color: #e0e0e0; display: flex; flex-direction: column; align-items: center; padding: 40px 20px; min-height: 100vh; }
-  h1 { font-size: 24px; margin-bottom: 24px; }
-  #status { font-size: 14px; margin-bottom: 16px; padding: 8px 16px; border-radius: 8px; background: #16213e; }
-  #btn { font-size: 18px; padding: 16px 48px; border: none; border-radius: 12px; cursor: pointer; font-weight: 600; transition: all 0.2s; }
+  html, body { height: 100%; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    background: #1a1a2e;
+    color: #e0e0e0;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+  }
+
+  /* 顶栏 */
+  header {
+    flex-shrink: 0;
+    padding: 14px 24px;
+    background: #16213e;
+    border-bottom: 1px solid #0f3460;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+  }
+  header h1 { font-size: 18px; font-weight: 600; }
+  header .right { display: flex; align-items: center; gap: 12px; font-size: 13px; }
+  header .user-info { color: #66bb6a; }
+  #logout-btn {
+    background: transparent;
+    border: 1px solid #e94560;
+    color: #e94560;
+    padding: 5px 12px;
+    border-radius: 6px;
+    font-size: 12px;
+    cursor: pointer;
+  }
+  #logout-btn:hover { background: #e94560; color: #fff; }
+
+  /* 登录面板（登出态） */
+  #login-panel {
+    margin: 60px auto;
+    width: 100%;
+    max-width: 360px;
+    background: #16213e;
+    border-radius: 12px;
+    padding: 24px;
+  }
+  #login-panel label { font-size: 13px; color: #78909c; }
+  #login-panel input {
+    width: 100%;
+    padding: 10px 12px;
+    margin-top: 6px;
+    border: 1px solid #0f3460;
+    border-radius: 8px;
+    background: #1a1a2e;
+    color: #e0e0e0;
+    font-size: 16px;
+    outline: none;
+  }
+  #login-panel input:focus { border-color: #4fc3f7; }
+  #login-btn {
+    margin-top: 12px;
+    width: 100%;
+    padding: 12px;
+    border: none;
+    border-radius: 8px;
+    background: #0f3460;
+    color: #e0e0e0;
+    font-size: 16px;
+    font-weight: 600;
+    cursor: pointer;
+  }
+  #login-btn:hover { background: #1a4a8a; }
+  #login-btn:disabled { opacity: 0.4; cursor: not-allowed; }
+  #login-error { color: #ef5350; font-size: 13px; margin-top: 8px; display: none; }
+
+  /* 主面板（登录后） */
+  #main-panel {
+    display: none;
+    flex: 1;
+    flex-direction: column;
+    overflow: hidden;
+  }
+
+  /* 主体：左日志 + 中聊天 + 右产品 */
+  .body-row {
+    flex: 1;
+    display: flex;
+    overflow: hidden;
+  }
+  .log-col {
+    width: 280px;
+    background: #0a0f1a;
+    border-right: 1px solid #0f3460;
+    display: flex;
+    flex-direction: column;
+    flex-shrink: 0;
+  }
+  .log-col h3 {
+    flex-shrink: 0;
+    font-size: 12px;
+    color: #78909c;
+    padding: 12px 16px;
+    border-bottom: 1px solid #0f3460;
+    letter-spacing: 1px;
+    text-transform: uppercase;
+  }
+  .chat-col {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    border-right: 1px solid #0f3460;
+    min-width: 0;
+  }
+  .products-col {
+    width: 320px;
+    background: #14202f;
+    overflow-y: auto;
+    padding: 16px;
+    flex-shrink: 0;
+  }
+  .products-col h3 {
+    font-size: 13px;
+    color: #78909c;
+    margin-bottom: 12px;
+    letter-spacing: 1px;
+    text-transform: uppercase;
+  }
+  .products-col .empty {
+    color: #4a5568;
+    font-size: 13px;
+    text-align: center;
+    margin-top: 30px;
+  }
+
+  /* 聊天滚动区 */
+  #chat {
+    flex: 1;
+    overflow-y: auto;
+    padding: 20px 24px;
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+  }
+  #chat::-webkit-scrollbar { width: 6px; }
+  #chat::-webkit-scrollbar-thumb { background: #0f3460; border-radius: 3px; }
+
+  /* 气泡 */
+  .msg { display: flex; max-width: 75%; }
+  .msg.user { align-self: flex-end; flex-direction: row-reverse; }
+  .msg.assistant { align-self: flex-start; }
+  .msg .avatar {
+    flex-shrink: 0;
+    width: 32px;
+    height: 32px;
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 16px;
+    margin: 0 8px;
+  }
+  .msg.user .avatar { background: #e94560; }
+  .msg.assistant .avatar { background: #533483; }
+  .msg .bubble {
+    padding: 10px 14px;
+    border-radius: 14px;
+    font-size: 15px;
+    line-height: 1.55;
+    word-break: break-word;
+    white-space: pre-wrap;
+  }
+  .msg.user .bubble {
+    background: #0f3460;
+    color: #e0e0e0;
+    border-top-right-radius: 4px;
+  }
+  .msg.assistant .bubble {
+    background: #16213e;
+    color: #e0e0e0;
+    border-top-left-radius: 4px;
+  }
+  .msg.assistant.streaming .bubble::after {
+    content: '▌';
+    color: #4fc3f7;
+    animation: blink 1s infinite;
+    margin-left: 2px;
+  }
+  @keyframes blink { 0%, 50% { opacity: 1; } 51%, 100% { opacity: 0; } }
+  .msg.partial .bubble {
+    background: #1a2a44;
+    color: #aaa;
+    font-style: italic;
+  }
+  .msg .time {
+    font-size: 11px;
+    color: #4a5568;
+    margin: 0 8px;
+    align-self: flex-end;
+  }
+
+  /* 产品卡片 */
+  .product-card {
+    background: #16213e;
+    border-radius: 10px;
+    padding: 12px 14px;
+    margin-bottom: 10px;
+    border-left: 3px solid #f0a500;
+  }
+  .product-card .name { font-weight: 600; font-size: 14px; margin-bottom: 4px; }
+  .product-card .price { color: #f0a500; font-weight: 700; font-size: 15px; margin-bottom: 4px; }
+  .product-card .attrs { color: #78909c; font-size: 12px; }
+
+  /* 底部控制条 */
+  .control-row {
+    flex-shrink: 0;
+    padding: 14px 24px;
+    background: #14202f;
+    border-top: 1px solid #0f3460;
+    display: flex;
+    align-items: center;
+    gap: 16px;
+  }
+  #status {
+    font-size: 12px;
+    padding: 4px 10px;
+    border-radius: 6px;
+    background: #16213e;
+    color: #78909c;
+    flex-shrink: 0;
+  }
+  #btn {
+    font-size: 15px;
+    padding: 10px 28px;
+    border: none;
+    border-radius: 10px;
+    cursor: pointer;
+    font-weight: 600;
+    flex-shrink: 0;
+  }
   #btn:disabled { opacity: 0.4; cursor: not-allowed; }
   #btn.idle { background: #0f3460; color: #e0e0e0; }
   #btn.connecting { background: #533483; color: #e0e0e0; }
   #btn.recording { background: #e94560; color: #fff; }
   #btn.waiting { background: #f0a500; color: #1a1a2e; }
   #btn.closing { background: #533483; color: #e0e0e0; }
-  #volume-bar-container { width: 300px; height: 12px; background: #16213e; border-radius: 6px; margin-top: 16px; overflow: hidden; }
-  #volume-bar { height: 100%; width: 0; background: linear-gradient(90deg, #0f3460, #e94560); border-radius: 6px; transition: width 0.05s; }
-  #log { width: 100%; max-width: 600px; margin-top: 24px; background: #16213e; border-radius: 12px; padding: 16px; height: 300px; overflow-y: auto; font-family: "SF Mono", "Fira Code", monospace; font-size: 12px; line-height: 1.6; }
-  .log-partial { color: #aaa; }
-  .log-final { color: #4fc3f7; font-weight: 600; }
-  .log-done { color: #66bb6a; }
-  .log-error { color: #ef5350; }
-  .log-tts { color: #ce93d8; }
-  .log-system { color: #78909c; }
+  #volume-bar-container {
+    flex: 1;
+    height: 8px;
+    background: #16213e;
+    border-radius: 4px;
+    overflow: hidden;
+    max-width: 240px;
+  }
+  #volume-bar {
+    height: 100%;
+    width: 0;
+    background: linear-gradient(90deg, #0f3460, #e94560);
+    transition: width 0.05s;
+  }
+
+  /* 日志（常显，左侧栏内滚动） */
+  #log {
+    flex: 1;
+    overflow-y: auto;
+    padding: 10px 14px;
+    color: #aaa;
+    font-family: "SF Mono", "Fira Code", monospace;
+    font-size: 11px;
+    line-height: 1.55;
+    white-space: pre-wrap;
+    word-break: break-all;
+  }
+  #log::-webkit-scrollbar { width: 5px; }
+  #log::-webkit-scrollbar-thumb { background: #1a2a44; border-radius: 3px; }
 </style>
 </head>
 <body>
-<h1>🎤 语音购物调试页</h1>
-<div id="status">状态: IDLE</div>
-<button id="btn" class="idle">开始录音</button>
-<div id="volume-bar-container"><div id="volume-bar"></div></div>
-<pre id="log"></pre>
+
+<header>
+  <h1>🎤 语音购物</h1>
+  <div class="right" id="auth-bar" style="display:none">
+    <span class="user-info" id="user-info"></span>
+    <button id="logout-btn">登出</button>
+  </div>
+</header>
+
+<!-- 登录面板（登出态） -->
+<div id="login-panel">
+  <label for="phone">手机号登录</label>
+  <input id="phone" type="tel" placeholder="输入手机号" maxlength="11" />
+  <button id="login-btn">登 录</button>
+  <div id="login-error"></div>
+</div>
+
+<!-- 主面板（登录态） -->
+<div id="main-panel">
+  <div class="body-row">
+    <div class="log-col">
+      <h3>调试日志</h3>
+      <pre id="log"></pre>
+    </div>
+    <div class="chat-col">
+      <div id="chat"></div>
+    </div>
+    <div class="products-col">
+      <h3>推荐商品</h3>
+      <div id="product-cards">
+        <div class="empty">暂无推荐</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="control-row">
+    <div id="status">IDLE</div>
+    <button id="btn" class="idle" disabled>开始录音</button>
+    <div id="volume-bar-container"><div id="volume-bar"></div></div>
+  </div>
+</div>
 
 <script>
 (() => {
-  // --- State Machine ---
   const STATES = { IDLE: 'IDLE', CONNECTING: 'CONNECTING', RECORDING: 'RECORDING', WAITING: 'WAITING', CLOSING: 'CLOSING' };
   const BTN_TEXT = { IDLE: '开始录音', CONNECTING: '连接中...', RECORDING: '停止录音', WAITING: '等待回复...', CLOSING: '关闭中...' };
   const BTN_CLASS = { IDLE: 'idle', CONNECTING: 'connecting', RECORDING: 'recording', WAITING: 'waiting', CLOSING: 'closing' };
+
+  const TOKEN_KEY = 'vs_auth_token';
+  const PHONE_KEY = 'vs_auth_phone';
 
   let state = STATES.IDLE;
   let ws = null;
@@ -49,28 +339,218 @@
   let workletNode = null;
   let userStopped = false;
   let playbackTime = 0;
+  let authToken = localStorage.getItem(TOKEN_KEY);
+  let currentPhone = localStorage.getItem(PHONE_KEY);
+
+  // 当前正在累积的临时元素
+  let partialUserBubble = null;        // 用户实时 ASR 部分文本
+  let currentAssistantBubble = null;   // 当前正在流式输出的助手气泡
 
   const btn = document.getElementById('btn');
   const statusEl = document.getElementById('status');
   const volumeBar = document.getElementById('volume-bar');
   const logEl = document.getElementById('log');
+  const chatEl = document.getElementById('chat');
+  const productCardsEl = document.getElementById('product-cards');
+  const loginPanel = document.getElementById('login-panel');
+  const mainPanel = document.getElementById('main-panel');
+  const authBar = document.getElementById('auth-bar');
+  const userInfoEl = document.getElementById('user-info');
+  const phoneInput = document.getElementById('phone');
+  const loginBtn = document.getElementById('login-btn');
+  const loginError = document.getElementById('login-error');
+  const logoutBtn = document.getElementById('logout-btn');
 
   function setState(newState) {
     state = newState;
-    statusEl.textContent = `状态: ${state}`;
+    statusEl.textContent = state;
     btn.textContent = BTN_TEXT[state];
     btn.className = BTN_CLASS[state];
     btn.disabled = (state === STATES.CONNECTING || state === STATES.WAITING || state === STATES.CLOSING);
   }
 
-  function log(msg, cls = 'log-system') {
+  function log(msg) {
     const time = new Date().toLocaleTimeString('zh-CN', { hour12: false, fractionalSecondDigits: 3 });
     logEl.textContent += `[${time}] ${msg}\n`;
-    // Apply class to last line — simplified: just append
     logEl.scrollTop = logEl.scrollHeight;
   }
 
-  // --- Cleanup ---
+  // --- 登录态切换 ---
+  function renderLoggedIn() {
+    loginPanel.style.display = 'none';
+    authBar.style.display = 'flex';
+    mainPanel.style.display = 'flex';
+    const tail = currentPhone ? currentPhone.slice(-4) : '****';
+    userInfoEl.textContent = `✓ 尾号 ${tail}`;
+    btn.disabled = false;
+  }
+
+  function renderLoggedOut() {
+    loginPanel.style.display = 'block';
+    authBar.style.display = 'none';
+    mainPanel.style.display = 'none';
+    btn.disabled = true;
+    setState(STATES.IDLE);
+    cleanup();
+  }
+
+  async function doLogin() {
+    const phone = phoneInput.value.trim();
+    if (!phone) { showLoginError('请输入手机号'); return; }
+    loginBtn.disabled = true;
+    loginBtn.textContent = '登录中...';
+    loginError.style.display = 'none';
+    try {
+      const resp = await fetch('/api/v1/auth/login', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ phone })
+      });
+      const data = await resp.json();
+      if (data.code !== 200) { showLoginError(data.msg || '登录失败'); return; }
+      authToken = data.data.token;
+      currentPhone = phone;
+      localStorage.setItem(TOKEN_KEY, authToken);
+      localStorage.setItem(PHONE_KEY, currentPhone);
+      renderLoggedIn();
+      log('登录成功');
+    } catch (e) {
+      showLoginError('网络错误: ' + e.message);
+    } finally {
+      loginBtn.disabled = false;
+      loginBtn.textContent = '登 录';
+    }
+  }
+
+  function showLoginError(msg) {
+    loginError.textContent = msg;
+    loginError.style.display = 'block';
+  }
+
+  function doLogout() {
+    authToken = null;
+    currentPhone = null;
+    localStorage.removeItem(TOKEN_KEY);
+    localStorage.removeItem(PHONE_KEY);
+    renderLoggedOut();
+    log('已登出');
+  }
+
+  loginBtn.addEventListener('click', doLogin);
+  phoneInput.addEventListener('keydown', (e) => { if (e.key === 'Enter') doLogin(); });
+  logoutBtn.addEventListener('click', doLogout);
+
+  // --- 聊天气泡渲染 ---
+  function nowTime() {
+    return new Date().toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' });
+  }
+
+  /** 创建一条消息气泡，role: user | assistant | partial */
+  function createBubble(role, text) {
+    const wrap = document.createElement('div');
+    wrap.className = 'msg ' + role;
+
+    const avatar = document.createElement('div');
+    avatar.className = 'avatar';
+    avatar.textContent = role === 'user' ? '我' : '🤖';
+
+    const bubble = document.createElement('div');
+    bubble.className = 'bubble';
+    bubble.textContent = text || '';
+
+    const time = document.createElement('div');
+    time.className = 'time';
+    time.textContent = nowTime();
+
+    wrap.appendChild(avatar);
+    wrap.appendChild(bubble);
+    wrap.appendChild(time);
+    chatEl.appendChild(wrap);
+    scrollChatToBottom();
+    return { wrap, bubble };
+  }
+
+  function scrollChatToBottom() {
+    requestAnimationFrame(() => {
+      chatEl.scrollTop = chatEl.scrollHeight;
+    });
+  }
+
+  /** ASR 部分识别：实时更新顶部用户灰色气泡 */
+  function updateUserPartial(text) {
+    if (!partialUserBubble) {
+      const b = createBubble('partial', text);
+      b.wrap.classList.add('user'); // 同样靠右
+      partialUserBubble = b;
+    } else {
+      partialUserBubble.bubble.textContent = text;
+      scrollChatToBottom();
+    }
+  }
+
+  /** ASR final：把 partial 转成正式 user 气泡 */
+  function finalizeUserMessage(text) {
+    if (partialUserBubble) {
+      partialUserBubble.wrap.classList.remove('partial');
+      partialUserBubble.wrap.classList.add('user');
+      partialUserBubble.bubble.textContent = text;
+      partialUserBubble = null;
+    } else {
+      createBubble('user', text);
+    }
+  }
+
+  /** 开始一条新的助手气泡（流式输出前调用） */
+  function beginAssistantBubble() {
+    const b = createBubble('assistant', '');
+    b.wrap.classList.add('streaming');
+    currentAssistantBubble = b;
+  }
+
+  /** 追加助手流式文字 */
+  function appendAssistantText(text) {
+    if (!currentAssistantBubble) {
+      beginAssistantBubble();
+    }
+    currentAssistantBubble.bubble.textContent += text;
+    scrollChatToBottom();
+  }
+
+  /** 助手回复完成 */
+  function finalizeAssistantBubble() {
+    if (currentAssistantBubble) {
+      currentAssistantBubble.wrap.classList.remove('streaming');
+      currentAssistantBubble = null;
+    }
+  }
+
+  /** 渲染产品卡片（右侧 sidebar） */
+  function renderProducts(products) {
+    if (!products || products.length === 0) {
+      productCardsEl.innerHTML = '<div class="empty">暂无推荐</div>';
+      return;
+    }
+    productCardsEl.innerHTML = '';
+    products.forEach((p, idx) => {
+      const card = document.createElement('div');
+      card.className = 'product-card';
+      const attrs = p.attributes ? Object.entries(p.attributes).map(([k,v]) => `${k}: ${v}`).join(' · ') : '';
+      card.innerHTML = `
+        <div class="name">${idx + 1}. ${escapeHtml(p.name || '')}</div>
+        <div class="price">¥${p.price || ''}</div>
+        ${attrs ? `<div class="attrs">${escapeHtml(attrs)}</div>` : ''}
+      `;
+      productCardsEl.appendChild(card);
+    });
+  }
+
+  function escapeHtml(s) {
+    return String(s).replace(/[&<>"']/g, c => ({
+      '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
+    }[c]));
+  }
+
+  // --- 清理 ---
   function cleanup() {
     if (workletNode) { workletNode.disconnect(); workletNode = null; }
     if (mediaStream) { mediaStream.getTracks().forEach(t => t.stop()); mediaStream = null; }
@@ -80,26 +560,34 @@
     volumeBar.style.width = '0';
   }
 
-  // --- Start Recording ---
+  // --- 开始录音 ---
   async function start() {
+    if (!authToken) {
+      log('未登录');
+      renderLoggedOut();
+      return;
+    }
     cleanup();
     userStopped = false;
-    log('[状态] userStopped = false', 'log-system');
+    partialUserBubble = null;
+    finalizeAssistantBubble();
     setState(STATES.CONNECTING);
 
-    // Connect WebSocket
     const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
-    const currentWs = new WebSocket(`${proto}//${location.host}/ws/voice`);
+    const sessionId = 'test-' + Date.now() + '-' + Math.random().toString(36).substring(2, 8);
+    const currentWs = new WebSocket(
+        `${proto}//${location.host}/ws/voice?sessionId=${sessionId}`,
+        ['Bearer-' + authToken]
+    );
     ws = currentWs;
 
     currentWs.onopen = async () => {
-      log('WebSocket 已连接', 'log-system');
+      log('WebSocket 已连接');
       setState(STATES.RECORDING);
-
       try {
         await startAudio(currentWs);
       } catch (e) {
-        log(`音频初始化失败: ${e.message}`, 'log-error');
+        log(`音频初始化失败: ${e.message}`);
         cleanup();
         setState(STATES.IDLE);
       }
@@ -107,90 +595,95 @@
 
     currentWs.onmessage = (event) => {
       if (event.data instanceof Blob) {
-        // TTS PCM frame
         event.data.arrayBuffer().then(buf => playPcm(buf));
         return;
       }
-      // JSON signal
       try {
         const signal = JSON.parse(event.data);
+        if (signal.type === 'error' && signal.code === 'AUTH_ERROR') {
+          log('鉴权失效，自动登出');
+          doLogout();
+          return;
+        }
         switch (signal.type) {
           case 'asr_partial':
-            log(`[ASR 部分] ${signal.text}`, 'log-partial');
+            updateUserPartial(signal.text);
             break;
           case 'asr_final':
-            log(`[ASR 最终] ${signal.text}`, 'log-final');
+            finalizeUserMessage(signal.text);
+            log(`[ASR 最终] ${signal.text}`);
             break;
           case 'agent_status':
-            log(`[Agent] ${signal.status}`, signal.status === 'done' ? 'log-done' : 'log-system');
-            if (signal.status === 'done' && userStopped) {
-              log('[状态] TTS done + userStopped=true，关闭 WebSocket', 'log-system');
+            log(`[Agent] ${signal.status}`);
+            break;
+          case 'stream_text':
+            appendAssistantText(signal.text);
+            break;
+          case 'stream_products':
+            renderProducts(signal.products);
+            log(`[产品] ${signal.products ? signal.products.length : 0} 个`);
+            break;
+          case 'stream_done':
+            finalizeAssistantBubble();
+            log('[流式] 输出完成');
+            if (userStopped) {
               currentWs.close();
               setState(STATES.IDLE);
-            } else if (signal.status === 'done') {
-              log('[状态] TTS done 但 userStopped=false，保持连接', 'log-system');
             }
             break;
           case 'error':
-            log(`[错误] ${signal.code}: ${signal.message}`, 'log-error');
+            log(`[错误] ${signal.code}: ${signal.message}`);
             break;
         }
       } catch (e) {
-        log(`解析消息失败: ${event.data}`, 'log-error');
+        log(`解析消息失败: ${event.data}`);
       }
     };
 
     currentWs.onclose = () => {
-      log('WebSocket 已关闭', 'log-system');
+      log('WebSocket 已关闭');
       cleanup();
       setState(STATES.IDLE);
     };
 
-    currentWs.onerror = (e) => {
-      log('WebSocket 错误', 'log-error');
+    currentWs.onerror = () => {
+      log('WebSocket 错误');
       cleanup();
       setState(STATES.IDLE);
     };
   }
 
-  // --- Audio Capture ---
+  // --- 音频采集 ---
   async function startAudio(currentWs) {
-    audioCtx = new AudioContext(); // Don't specify sampleRate — use browser native
+    audioCtx = new AudioContext();
     mediaStream = await navigator.mediaDevices.getUserMedia({
       audio: {
         echoCancellation: true,
-        noiseSuppression: false,  // Prevent Chrome from weakening low-volume speech
+        noiseSuppression: false,
         autoGainControl: true
       }
     });
 
     const source = audioCtx.createMediaStreamSource(mediaStream);
 
-    // Create AudioWorklet for downsample + frame aggregation + RMS
     const workletCode = `
       class VoiceProcessor extends AudioWorkletProcessor {
         constructor() {
           super();
-          this.buffer = new Float32Array(1600); // 100ms @ 16kHz
+          this.buffer = new Float32Array(1600);
           this.bufIdx = 0;
         }
-
         process(inputs, outputs) {
           const input = inputs[0];
           if (!input || !input[0]) return true;
-
           const samples = input[0];
           const nativeRate = sampleRate;
           const ratio = nativeRate / 16000;
-
-          // Downsample
           for (let i = 0; i < samples.length; i++) {
             if (i % Math.round(ratio) === 0) {
               const s16 = Math.max(-1, Math.min(1, samples[i]));
               this.buffer[this.bufIdx++] = s16;
-
               if (this.bufIdx >= 1600) {
-                // Convert to 16-bit PCM
                 const pcm = new Int16Array(1600);
                 let rmsSum = 0;
                 for (let j = 0; j < 1600; j++) {
@@ -216,95 +709,79 @@
     URL.revokeObjectURL(url);
 
     workletNode = new AudioWorkletNode(audioCtx, 'voice-processor');
-
     workletNode.port.onmessage = (event) => {
       const { pcm, rms } = event.data;
-
-      // Update volume bar
       const pct = Math.min(100, rms * 500);
       volumeBar.style.width = `${pct}%`;
-
-      // Send PCM frame via WebSocket (closure captures currentWs)
       if (currentWs.readyState === WebSocket.OPEN) {
         currentWs.send(pcm);
       }
     };
 
     source.connect(workletNode);
-    workletNode.connect(audioCtx.destination); // Needed for processing
+    workletNode.connect(audioCtx.destination);
   }
 
-  // --- Stop Recording ---
+  // --- 停止录音 ---
   function stop() {
-    log('[状态] 用户主动停止，userStopped → true', 'log-system');
+    log('用户停止');
     userStopped = true;
     setState(STATES.WAITING);
 
-    // Stop audio capture
     if (workletNode) { workletNode.disconnect(); workletNode = null; }
     if (mediaStream) { mediaStream.getTracks().forEach(t => t.stop()); mediaStream = null; }
     if (audioCtx) { audioCtx.close().catch(() => {}); audioCtx = null; }
     volumeBar.style.width = '0';
 
-    // Send 800ms silence frames (8 × 100ms = 8 frames of 3200 zero bytes = 1600 Int16 samples)
-    const silenceFrame = new ArrayBuffer(3200); // 1600 samples × 2 bytes
-    let sent = 0;
+    const silenceFrame = new ArrayBuffer(3200);
     for (let i = 0; i < 8; i++) {
       if (ws && ws.readyState === WebSocket.OPEN) {
         ws.send(silenceFrame);
-        sent++;
       }
     }
-    log(`[状态] 已发送 ${sent}/8 静音补帧`, 'log-system');
 
-    // Plan A: 3s fallback — force close WebSocket if no done signal received
     setTimeout(() => {
       if (ws && ws.readyState === WebSocket.OPEN && userStopped) {
-        log('[状态] stop 后 3s 未收到 done，强制关闭 WebSocket', 'log-system');
+        log('3s 未收到 stream_done，强制关闭');
         ws.close();
       }
     }, 3000);
   }
 
-  // --- TTS Playback ---
+  // --- TTS 播放 ---
   function playPcm(arrayBuffer) {
     if (!audioCtx || audioCtx.state === 'closed') {
       audioCtx = new AudioContext({ sampleRate: 24000 });
     }
-
     const pcm16 = new Int16Array(arrayBuffer);
     const float32 = new Float32Array(pcm16.length);
     for (let i = 0; i < pcm16.length; i++) {
       float32[i] = pcm16[i] / (pcm16[i] < 0 ? 0x8000 : 0x7FFF);
     }
-
     const audioBuffer = audioCtx.createBuffer(1, float32.length, 24000);
     audioBuffer.getChannelData(0).set(float32);
-
     const source = audioCtx.createBufferSource();
     source.buffer = audioBuffer;
     source.connect(audioCtx.destination);
-
-    // Seamless playback: startAt = max(now, lastEnd)
     const now = audioCtx.currentTime;
     const startAt = Math.max(now, playbackTime);
     source.start(startAt);
     playbackTime = startAt + audioBuffer.duration;
   }
 
-  // --- Button Handler ---
   btn.addEventListener('click', () => {
-    switch (state) {
-      case STATES.IDLE:
-        start();
-        break;
-      case STATES.RECORDING:
-        stop();
-        break;
-    }
+    if (state === STATES.IDLE) start();
+    else if (state === STATES.RECORDING) stop();
   });
 
-  log('调试页已就绪，点击"开始录音"开始', 'log-system');
+  // --- 启动：恢复登录态 ---
+  if (authToken && currentPhone) {
+    renderLoggedIn();
+    log('已恢复登录态');
+  } else {
+    renderLoggedOut();
+    log('请先登录');
+  }
 })();
 </script>
 </body>

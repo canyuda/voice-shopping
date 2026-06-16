@@ -2,7 +2,7 @@
 
 ## Purpose
 
-Recommendation pipeline orchestration capability: RecommendOrchestrator chains profile load → query build → embed → filter → candidate retrieval → fallback → rerank → top 3 → reason generation, plus RecommendDebugController for manual testing. ParallelRecommendService 提供基于 `CompletableFuture` 的并行等价实现。
+Recommendation pipeline orchestration capability: RecommendOrchestrator chains profile load → query build → embed → filter → candidate retrieval → fallback → rerank → top 3, plus RecommendDebugController for manual testing. ParallelRecommendService 提供基于 `CompletableFuture` 的并行等价实现。推荐主链路不再调用 RecommendReasonService，推荐理由由 EmotionAgent 合并生成。
 
 ## Requirements
 
@@ -20,16 +20,18 @@ Recommendation pipeline orchestration capability: RecommendOrchestrator chains p
 8. 空结果兜底（渐进放宽）—— 每次重试 SHALL 复用同一 scope filter，**绝不**为了凑结果而绕开 scope
 9. `reranker.rerank(top20, profile, slots)` 画像加权
 10. 取 Top 3
-11. `reasonService.attachReasons(sessionId, userNeeds, top3)` 生成理由
-12. 返回 `RecommendResult(top3, "professional")`
+11. 不再调用 `reasonService.attachReasons`，直接返回 `new RecommendResult(top3, "professional")`，其中每个 item 的 reason 为 null
 
 **实现约束**：
 - 步骤 2-4、7-8 的实现 MAY 委托给协作类 `RecommendCandidateRetriever`；步骤 5-6 的 scope 解析与合流 SHALL 在编排层完成（即 `RecommendOrchestrator` / `ParallelRecommendService` 各自直接调 `scopeCache + scopeFilterBuilder + sqlFilterBuilder.merge`），retriever 内部 SHALL NOT 感知 sessionId / scope，保持职责单一。
 - `RecommendOrchestrator.recommend` 的方法签名、返回值结构、异常语义、空结果行为 MUST NOT 因 scope 叠加而变化（除上述 WARN 日志外）。
+- `RecommendOrchestrator` 构造器 SHALL 移除 `RecommendReasonService` 参数，不再注入该依赖。
+- `RecommendReasonService` 类文件保留以备回滚，但主链路彻底不调用。
 
-#### Scenario: 完整推荐流程返回 Top 3（全平台 scope）
+#### Scenario: 完整推荐流程返回 Top 3 且 reason 为 null（全平台 scope）
 - **WHEN** sessionId="s1" 的 scope 为 `(7, [], null)`，调用 `recommend("s1", 7L, "我想买跑鞋", Map.of("category","跑鞋","budget",500))` 且有匹配商品
-- **THEN** 返回 RecommendResult，items 包含 3 个带推荐理由的商品，explanationTone 为 "professional"
+- **THEN** 返回 RecommendResult，items 包含 3 个商品，explanationTone 为 "professional"，每个 item 的 reason 字段为 null
+- **THEN** `RecommendReasonService.attachReasons` 未被调用
 - **THEN** 检索 SQL 不包含 `merchant_id` 子句
 
 #### Scenario: 单商家 scope 过滤
@@ -102,6 +104,7 @@ Recommendation pipeline orchestration capability: RecommendOrchestrator chains p
 3. 候选召回 MUST 复用与 `RecommendOrchestrator` **同一份** fallback 实现（即 `RecommendCandidateRetriever.retrieve`），保证两级 fallback 语义（预算 +30% / 去 categoryL2）一致。
 4. **（本次修订新增）** scope 解析与合流 SHALL 与 `RecommendOrchestrator` 的步骤 5-6 完全一致：`scopeCache.get(sessionId)` → 缓存 miss 兜底 `platformWide(userId)` + WARN 日志 → `scopeFilterBuilder.build` → `sqlFilterBuilder.merge`。scope 解析 MAY 与 profile 加载并行（同一条 future 链或独立 future），但合流 MUST 在 candidates 腿的 `retrieve` 调用之前完成。
 5. **（本次修订新增）** `ParallelRecommendService` 与 `RecommendOrchestrator` 在同一组 (sessionId, userId, utterance, slots) 输入下，最终传入 `productVectorService.search` 的 filter clause + params 必须等价（含 scope 子句），fallback 路径同样等价。
+6. `ParallelRecommendService` 构造器 SHALL 移除 `RecommendReasonService` 参数，不再注入该依赖。`recommend()` 方法 SHALL 不调用 `reasonService.attachReasons`，直接返回 reason=null 的 topK。
 
 #### Scenario: 并行实现 scope 等价
 - **WHEN** scope=`(7,[5],null)`，同一组 (sessionId, userId, utterance, slots) 同时传入 `RecommendOrchestrator` 与 `ParallelRecommendService`
@@ -111,9 +114,14 @@ Recommendation pipeline orchestration capability: RecommendOrchestrator chains p
 - **WHEN** scope cache 中无 sessionId 记录
 - **THEN** 两个服务都记 WARN 日志并按全平台 scope 继续执行
 
-#### Scenario: 与串行版本结果等价
+#### Scenario: 并行实现不调用 reasonService
+- **WHEN** 同一组 (sessionId, userId, utterance, slots) 传入 ParallelRecommendService.recommend
+- **THEN** `RecommendReasonService.attachReasons` 未被调用
+- **THEN** 返回的 RecommendResult.items 中每个 item 的 reason 为 null
+
+#### Scenario: 与串行版本结果等价（不含 reason）
 - **WHEN** 同一组 (sessionId, userId, utterance, slots) 同时传给 `RecommendOrchestrator.recommend` 与 `ParallelRecommendService.recommend`
-- **THEN** 两者返回的 `RecommendResult.items()` 中商品 productId 集合相同、顺序相同、`explanationTone` 相同（reasons 文本因 LLM 不确定可能不同，不强求逐字相等）
+- **THEN** 两者返回的 `RecommendResult.items()` 中商品 productId 集合相同、顺序相同、`explanationTone` 相同（reason 均为 null）
 
 #### Scenario: profile 腿失败 fail-fast
 - **WHEN** `profileService.load` 抛 RuntimeException

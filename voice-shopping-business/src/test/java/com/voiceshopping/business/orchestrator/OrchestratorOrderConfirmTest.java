@@ -4,11 +4,13 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.voiceshopping.business.agent.ClarifyRuleService;
 import com.voiceshopping.business.agent.ClarifyService;
 import com.voiceshopping.business.agent.EmotionService;
+import com.voiceshopping.business.agent.EmotionStreamingService;
 import com.voiceshopping.business.agent.IntentService;
 import com.voiceshopping.business.compliance.ComplianceChecker;
 import com.voiceshopping.business.event.VoiceEventPublisher;
 import com.voiceshopping.business.memory.ShortTermMemory;
 import com.voiceshopping.business.memory.TurnSummarizer;
+import com.voiceshopping.ai.tts.TTSService;
 import com.voiceshopping.business.order.OrderReferenceResolver;
 import com.voiceshopping.business.order.OrderService;
 import com.voiceshopping.business.order.PendingOrderStore;
@@ -84,6 +86,8 @@ class OrchestratorOrderConfirmTest {
     private OrderService orderService;
     private PendingOrderStore pendingOrderStore;
     private OrderReferenceResolver referenceResolver;
+    private EmotionStreamingService emotionStreamingService;
+    private TTSService ttsService;
 
     @BeforeEach
     void setup() {
@@ -105,6 +109,8 @@ class OrchestratorOrderConfirmTest {
         orderService = mock(OrderService.class);
         pendingOrderStore = mock(PendingOrderStore.class);
         referenceResolver = mock(OrderReferenceResolver.class);
+        emotionStreamingService = mock(EmotionStreamingService.class);
+        ttsService = mock(TTSService.class);
 
         Session session = new Session();
         session.setId(SESSION_ID);
@@ -119,9 +125,11 @@ class OrchestratorOrderConfirmTest {
                 parallelRecommendService, perspectiveHubService, emotionService,
                 complianceChecker, objectMapper, turnSummarizer,
                 orderService, pendingOrderStore, referenceResolver,
+                emotionStreamingService, ttsService,
                 new SimpleMeterRegistry(),
                 /* perspectiveEnabled */ false,
-                /* orderEnabled       */ true);
+                /* orderEnabled       */ true,
+                50L);
     }
 
     private SessionState orderConfirmState() {
@@ -288,7 +296,7 @@ class OrchestratorOrderConfirmTest {
                 .thenReturn(com.voiceshopping.common.dto.agent.ClarifyResult.ready());
         when(parallelRecommendService.recommend(eq(SESSION_ID), eq(USER_ID), anyString(), any()))
                 .thenReturn(new RecommendResult(List.of(), "professional"));
-        when(emotionService.wrap(eq(SESSION_ID), anyString(), any()))
+        when(emotionService.wrap(eq(SESSION_ID), anyString(), anyString(), any()))
                 .thenReturn(new EmotionResult("好，给你挑了几款", List.of()));
 
         EmotionResult result = buildOrchestrator().handle(SESSION_ID, USER_ID, "再给我推荐点贵的");

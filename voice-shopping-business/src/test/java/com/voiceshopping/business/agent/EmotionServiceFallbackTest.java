@@ -25,7 +25,8 @@ class EmotionServiceFallbackTest {
     }
 
     @Test
-    void fallback_nonEmptyItems_listsNamesAndReasons() {
+    void fallback_nonEmptyItems_listsNames() {
+        // reason 已延迟到合并 emotion prompt 生成，fallback 不再输出 reason
         var rec = new RecommendResult(
                 List.of(item("Nike跑鞋", "缓震好"), item("Asics", "支撑稳")),
                 "professional");
@@ -33,7 +34,6 @@ class EmotionServiceFallbackTest {
 
         assertTrue(speech.startsWith("好，给你挑了几款。"));
         assertTrue(speech.contains("Nike跑鞋"));
-        assertTrue(speech.contains("缓震好"));
         assertTrue(speech.contains("Asics"));
         assertTrue(speech.endsWith("你看看选哪个？"));
     }
@@ -45,8 +45,9 @@ class EmotionServiceFallbackTest {
                 "professional");
         String speech = EmotionService.fallback(rec);
 
-        assertTrue(speech.contains("第1款: OnlyName\n"));
-        assertTrue(speech.contains("第2款: EmptyReason\n"));
+        // fallback 只输出名称，不输出 reason
+        assertTrue(speech.contains("第1款: OnlyName"));
+        assertTrue(speech.contains("第2款: EmptyReason"));
         assertFalse(speech.contains("OnlyName,"));
         assertFalse(speech.contains("EmptyReason,"));
     }

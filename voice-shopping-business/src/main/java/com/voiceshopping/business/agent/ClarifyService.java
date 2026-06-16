@@ -44,6 +44,18 @@ public class ClarifyService {
      * @return ASK with a natural question, or READY if slots are sufficient
      */
     public ClarifyResult decide(String sessionId, String utterance, Map<String, Object> slots) {
+        long t0 = System.currentTimeMillis();
+        com.voiceshopping.business.orchestrator.AgentTraceLogger.enter("CLARIFY",
+                "sessionId=" + sessionId + ", slots=" + slots);
+        try {
+            return decideInternal(sessionId, utterance, slots);
+        } finally {
+            com.voiceshopping.business.orchestrator.AgentTraceLogger.exit("CLARIFY",
+                    System.currentTimeMillis() - t0, "");
+        }
+    }
+
+    private ClarifyResult decideInternal(String sessionId, String utterance, Map<String, Object> slots) {
         // 1. Extract category
         String category = (String) slots.get("category");
 

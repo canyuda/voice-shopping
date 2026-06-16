@@ -15,7 +15,7 @@ import org.springframework.stereotype.Component;
 @Component
 public class EmotionAgentBuilder {
 
-    private static final String PROMPT_FILE = "emotion.txt";
+    private static final String PROMPT_FILE = "emotion-merged.txt";
 
     private final DashScopeChatModel model;
     private final PromptLoader promptLoader;

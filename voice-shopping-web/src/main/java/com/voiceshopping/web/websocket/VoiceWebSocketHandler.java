@@ -8,10 +8,14 @@ import com.voiceshopping.ai.tts.TTSService;
 import com.voiceshopping.business.memory.LongTermMemoryWriter;
 import com.voiceshopping.business.orchestrator.OrchestratorService;
 import com.voiceshopping.business.session.SessionService;
+import com.voiceshopping.common.dto.agent.StreamChunk;
 import com.voiceshopping.common.dto.AgentDisplay;
 import com.voiceshopping.common.dto.AgentStatus;
 import com.voiceshopping.common.dto.AsrFinalResult;
 import com.voiceshopping.common.dto.AsrPartialResult;
+import com.voiceshopping.common.dto.StreamDone;
+import com.voiceshopping.common.dto.StreamProducts;
+import com.voiceshopping.common.dto.StreamText;
 import com.voiceshopping.common.dto.VoiceError;
 import com.voiceshopping.common.dto.agent.EmotionResult;
 import com.alibaba.dashscope.audio.asr.recognition.RecognitionResult;
@@ -201,24 +205,46 @@ public class VoiceWebSocketHandler extends AbstractWebSocketHandler {
         String bizSessionId = (String) session.getAttributes().get(AuthHandshakeInterceptor.ATTR_SESSION_ID);
         Long userId = (Long) session.getAttributes().get(AuthHandshakeInterceptor.ATTR_USER_ID);
 
-        EmotionResult reply;
+        // 订阅流式输出
         try {
-            reply = orchestratorService.handle(bizSessionId, userId, text);
+            orchestratorService.streamHandle(bizSessionId, userId, text)
+                    .subscribe(
+                            chunk -> handleStreamChunk(session, chunk),
+                            error -> {
+                                log.error("[{}] streamHandle error for bizSessionId={}, userId={} — falling back",
+                                        wsId, bizSessionId, userId, error);
+                                sendTextSafely(session, new VoiceError("AGENT_ERROR", error.getMessage()));
+                                speak(session, FALLBACK_REPLY);
+                            },
+                            () -> {
+                                log.info("[{}] streamHandle complete, sending StreamDone", wsId);
+                                sendTextSafely(session, new StreamDone());
+                            }
+                    );
         } catch (Exception e) {
-            log.error("[{}] Orchestrator handle failed for bizSessionId={}, userId={} — falling back",
+            log.error("[{}] streamHandle failed to start for bizSessionId={}, userId={} — falling back",
                     wsId, bizSessionId, userId, e);
             sendTextSafely(session, new VoiceError("AGENT_ERROR", e.getMessage()));
-            // Fallback: still drive TTS with a soothing prompt so the channel is not silent.
             speak(session, FALLBACK_REPLY);
-            return;
         }
+    }
 
-        // Publish display blocks BEFORE audio so the UI can render cards while
-        // the user hears the spoken reply.
-        sendTextSafely(session, new AgentDisplay(
-                reply.displayBlocks() == null ? List.of() : reply.displayBlocks()));
-
-        speak(session, reply.speechText());
+    /**
+     * 按 StreamChunk 类型分发到对应的 WebSocket 信令。
+     */
+    private void handleStreamChunk(WebSocketSession session, StreamChunk chunk) {
+        switch (chunk.type()) {
+            case PRODUCTS -> sendTextSafely(session, new StreamProducts(
+                    chunk.products() instanceof List<?> list ? list : List.of()));
+            case TEXT -> sendTextSafely(session, new StreamText(chunk.text()));
+            case AUDIO -> {
+                if (chunk.audio() != null) {
+                    byte[] pcm = new byte[chunk.audio().remaining()];
+                    chunk.audio().get(pcm);
+                    sendBinarySafely(session, pcm);
+                }
+            }
+        }
     }
 
     /**

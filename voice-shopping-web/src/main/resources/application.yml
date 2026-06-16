@@ -77,6 +77,9 @@ voice-shopping:
       voice: ${VOICE_TTS_VOICE:longwan}
   perspective:
     enabled: true
+  streaming:
+    # 候选断点（逗号等）超时时间，超时后 flush 为独立句子送 TTS
+    sentence-aggregate-timeout-ms: ${STREAMING_SENTENCE_TIMEOUT:50}
   order:
     # Order placement flow toggle. When false, the ORDER_CONFIRM branch
     # falls back to the legacy placeholder reply (see OrchestratorService).

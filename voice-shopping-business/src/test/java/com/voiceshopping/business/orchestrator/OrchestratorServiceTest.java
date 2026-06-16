@@ -4,11 +4,13 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.voiceshopping.business.agent.ClarifyRuleService;
 import com.voiceshopping.business.agent.ClarifyService;
 import com.voiceshopping.business.agent.EmotionService;
+import com.voiceshopping.business.agent.EmotionStreamingService;
 import com.voiceshopping.business.agent.IntentService;
 import com.voiceshopping.business.compliance.ComplianceChecker;
 import com.voiceshopping.business.event.VoiceEventPublisher;
 import com.voiceshopping.business.memory.ShortTermMemory;
 import com.voiceshopping.business.memory.TurnSummarizer;
+import com.voiceshopping.ai.tts.TTSService;
 import com.voiceshopping.business.order.OrderReferenceResolver;
 import com.voiceshopping.business.order.OrderService;
 import com.voiceshopping.business.order.PendingOrderStore;
@@ -78,6 +80,8 @@ class OrchestratorServiceTest {
     private OrderService orderService;
     private PendingOrderStore pendingOrderStore;
     private OrderReferenceResolver referenceResolver;
+    private EmotionStreamingService emotionStreamingService;
+    private TTSService ttsService;
 
     @BeforeEach
     void setup() {
@@ -100,6 +104,8 @@ class OrchestratorServiceTest {
         orderService = mock(OrderService.class);
         pendingOrderStore = mock(PendingOrderStore.class);
         referenceResolver = mock(OrderReferenceResolver.class);
+        emotionStreamingService = mock(EmotionStreamingService.class);
+        ttsService = mock(TTSService.class);
 
         // Default: session exists, state is empty.
         Session session = new Session();
@@ -129,7 +135,9 @@ class OrchestratorServiceTest {
                 parallelRecommendService, perspectiveHubService, emotionService,
                 complianceChecker, objectMapper, turnSummarizer,
                 orderService, pendingOrderStore, referenceResolver,
-                new SimpleMeterRegistry(), perspectiveEnabled, orderEnabled);
+                emotionStreamingService, ttsService,
+                new SimpleMeterRegistry(), perspectiveEnabled, orderEnabled,
+                50L);
     }
 
     // ---------------------------------------------------------------------
@@ -440,7 +448,7 @@ class OrchestratorServiceTest {
         buildOrchestrator(true).handle(SESSION_ID, USER_ID, "想买跑鞋");
 
         ArgumentCaptor<String> utteranceCaptor = ArgumentCaptor.forClass(String.class);
-        verify(emotionService).wrap(eq(SESSION_ID), utteranceCaptor.capture(), any());
+        verify(emotionService).wrap(eq(SESSION_ID), utteranceCaptor.capture(), anyString(), any());
         assertThat(utteranceCaptor.getValue())
                 .contains("想买跑鞋")
                 .contains("[多视角点评]")
@@ -511,7 +519,7 @@ class OrchestratorServiceTest {
         when(intentService.classify(eq(SESSION_ID), anyString()))
                 .thenReturn(new IntentResult(IntentEnum.CHITCHAT, Map.of(), 0.9));
         // EmotionService produces its recommendation-style empty fallback.
-        when(emotionService.wrap(eq(SESSION_ID), anyString(), any()))
+        when(emotionService.wrap(eq(SESSION_ID), anyString(), anyString(), any()))
                 .thenReturn(new EmotionResult(
                         "这个条件下合适的不多，要不要放宽点预算再看看？", List.of()));
 
@@ -524,7 +532,7 @@ class OrchestratorServiceTest {
     void chitchat_keepsNonFallbackSpeechAsIs() {
         when(intentService.classify(eq(SESSION_ID), anyString()))
                 .thenReturn(new IntentResult(IntentEnum.CHITCHAT, Map.of(), 0.9));
-        when(emotionService.wrap(eq(SESSION_ID), anyString(), any()))
+        when(emotionService.wrap(eq(SESSION_ID), anyString(), anyString(), any()))
                 .thenReturn(new EmotionResult("哈哈那确实有趣", List.of()));
 
         EmotionResult reply = buildOrchestrator(false).handle(SESSION_ID, USER_ID, "讲个笑话");
@@ -548,7 +556,7 @@ class OrchestratorServiceTest {
     private void stubRecommendation(List<RecommendedItem> items) {
         when(parallelRecommendService.recommend(eq(SESSION_ID), eq(USER_ID), anyString(), any()))
                 .thenReturn(new RecommendResult(items, "professional"));
-        when(emotionService.wrap(eq(SESSION_ID), anyString(), any()))
+        when(emotionService.wrap(eq(SESSION_ID), anyString(), anyString(), any()))
                 .thenReturn(new EmotionResult("好，给你挑了几款", items));
     }
 

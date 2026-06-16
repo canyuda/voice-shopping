@@ -4,6 +4,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.voiceshopping.business.agent.ClarifyRuleService;
 import com.voiceshopping.business.agent.ClarifyService;
 import com.voiceshopping.business.agent.EmotionService;
+import com.voiceshopping.business.agent.EmotionStreamingService;
 import com.voiceshopping.business.agent.IntentService;
 import com.voiceshopping.business.compliance.ComplianceChecker;
 import com.voiceshopping.business.event.VoiceEventPublisher;
@@ -21,6 +22,7 @@ import com.voiceshopping.common.dto.agent.IntentResult;
 import com.voiceshopping.common.dto.agent.LastRecommendationsSnapshot;
 import com.voiceshopping.common.dto.agent.RecommendResult;
 import com.voiceshopping.common.dto.agent.RecommendedItem;
+import com.voiceshopping.common.dto.agent.StreamChunk;
 import com.voiceshopping.common.dto.order.PendingOrder;
 import com.voiceshopping.common.enums.IntentEnum;
 import com.voiceshopping.common.event.UserSpokenEvent;
@@ -28,6 +30,8 @@ import com.voiceshopping.common.exception.NotFoundException;
 import com.voiceshopping.infrastructure.repository.SessionRepository;
 import com.voiceshopping.infrastructure.repository.entity.OrderRecord;
 import com.voiceshopping.infrastructure.repository.entity.Session;
+import com.voiceshopping.ai.tts.SentenceAggregator;
+import com.voiceshopping.ai.tts.TTSService;
 import com.voiceshopping.infrastructure.repository.entity.SessionState;
 import io.micrometer.core.instrument.MeterRegistry;
 import io.micrometer.core.instrument.Timer;
@@ -35,14 +39,17 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
+import reactor.core.publisher.Flux;
 
 import java.math.BigDecimal;
+import java.time.Duration;
 import java.time.Instant;
 import java.util.EnumMap;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.stream.Collectors;
 
 /**
  * Conversation orchestrator — single entry point that wires together
@@ -115,9 +122,12 @@ public class OrchestratorService {
     private final OrderService orderService;
     private final PendingOrderStore pendingOrderStore;
     private final OrderReferenceResolver referenceResolver;
+    private final EmotionStreamingService emotionStreamingService;
+    private final TTSService ttsService;
 
     private final boolean perspectiveEnabled;
     private final boolean orderEnabled;
+    private final Duration sentenceAggregateTimeout;
 
     /** Pre-built timers per intent — avoid Timer.builder allocation on every call. */
     private final Map<IntentEnum, Timer> timersByIntent;
@@ -138,9 +148,12 @@ public class OrchestratorService {
                                OrderService orderService,
                                PendingOrderStore pendingOrderStore,
                                OrderReferenceResolver referenceResolver,
+                               EmotionStreamingService emotionStreamingService,
+                               TTSService ttsService,
                                MeterRegistry meterRegistry,
                                @Value("${voice-shopping.perspective.enabled:false}") boolean perspectiveEnabled,
-                               @Value("${voice-shopping.order.enabled:true}") boolean orderEnabled) {
+                               @Value("${voice-shopping.order.enabled:true}") boolean orderEnabled,
+                               @Value("${voice-shopping.streaming.sentence-aggregate-timeout-ms:50}") long sentenceAggregateTimeoutMs) {
         this.sessionRepository = sessionRepository;
         this.sessionStateService = sessionStateService;
         this.shortTermMemory = shortTermMemory;
@@ -157,8 +170,11 @@ public class OrchestratorService {
         this.orderService = orderService;
         this.pendingOrderStore = pendingOrderStore;
         this.referenceResolver = referenceResolver;
+        this.emotionStreamingService = emotionStreamingService;
+        this.ttsService = ttsService;
         this.perspectiveEnabled = perspectiveEnabled;
         this.orderEnabled = orderEnabled;
+        this.sentenceAggregateTimeout = Duration.ofMillis(sentenceAggregateTimeoutMs);
 
         // Pre-build one Timer per IntentEnum so finally-block lookup is O(1) (D13).
         this.timersByIntent = new EnumMap<>(IntentEnum.class);
@@ -181,6 +197,10 @@ public class OrchestratorService {
     public EmotionResult handle(String sessionId, Long userId, String utterance) {
         Timer.Sample sample = Timer.start();
         IntentEnum finalIntent = IntentEnum.OUT_OF_SCOPE;
+        AgentTraceLogger.startTrace(sessionId);
+        long t0 = System.currentTimeMillis();
+        AgentTraceLogger.enter("HANDLE",
+                String.format("sessionId=%s, userId=%s, utterance=%s", sessionId, userId, utterance));
 
         try {
             // 1. Find session — fail fast when not present (D1)
@@ -234,7 +254,247 @@ public class OrchestratorService {
                     revised.mergedSlots(), outcome);
         } finally {
             sample.stop(timersByIntent.get(finalIntent));
+            AgentTraceLogger.exit("HANDLE", System.currentTimeMillis() - t0,
+                    "finalIntent=" + finalIntent);
+            AgentTraceLogger.endTrace();
         }
+    }
+
+    /**
+     * 流式处理一轮对话，返回 Flux&lt;StreamChunk&gt;。
+     * <p>
+     * 前置逻辑（session 查找 → event 发布 → state 加载 → phase 短路 → intent 分类
+     * → intent 矫正 → dispatch）与 handle() 相同，但 dispatch 后的推荐 + 情感应答
+     * 改为流式：产品卡片先行 → 文字流经 SentenceAggregator 聚合 → 逐句过合规 →
+     * TTS 合成音频。doFinally 中写记忆 + 持久化状态。
+     *
+     * @throws NotFoundException 当 sessionId 不匹配已有 session
+     */
+    public Flux<StreamChunk> streamHandle(String sessionId, Long userId, String utterance) {
+        Timer.Sample sample = Timer.start();
+        IntentEnum finalIntent = IntentEnum.OUT_OF_SCOPE;
+        final String traceId = AgentTraceLogger.startTrace(sessionId);
+        final long t0 = System.currentTimeMillis();
+        AgentTraceLogger.enter("STREAM_HANDLE",
+                String.format("sessionId=%s, userId=%s, utterance=%s", sessionId, userId, utterance));
+
+        // === 前置逻辑（同步执行，同 handle()） ===
+        Session session = sessionRepository.findById(sessionId)
+                .orElseThrow(() -> new NotFoundException("会话不存在: " + sessionId));
+
+        voiceEventPublisher.publish(new UserSpokenEvent(
+                sessionId, userId, utterance, System.currentTimeMillis()));
+
+        SessionState state = sessionStateService.load(sessionId)
+                .orElseGet(() -> initialState(sessionId, session.getMerchantId()));
+
+        // Phase 短路：订单确认阶段走同步 handle()，结果转为 Flux
+        if (orderEnabled && SessionPhase.ORDER_CONFIRM.equals(state.getPhase())) {
+            BranchOutcome shortCircuit = handleOrderConfirm(sessionId, userId, state, utterance);
+            if (shortCircuit != null) {
+                finalIntent = IntentEnum.ORDER_CONFIRM;
+                EmotionResult result = finalizeTurn(sessionId, userId, utterance, state,
+                        finalIntent, state.getSlots(), shortCircuit);
+                sample.stop(timersByIntent.get(finalIntent));
+                AgentTraceLogger.exit("STREAM_HANDLE", System.currentTimeMillis() - t0,
+                        "ORDER_CONFIRM short-circuit");
+                AgentTraceLogger.endTrace();
+                return singleTurnFlux(result, shortCircuit.newRecItems());
+            }
+            state.setPhase(SessionPhase.RECOMMEND);
+        }
+
+        IntentResult intent = intentService.classify(sessionId, utterance);
+        RevisedIntent revised = reviseIntent(intent, state);
+        finalIntent = revised.intent();
+        AgentTraceLogger.event("STREAM_HANDLE",
+                "intent classified=" + intent.intent() + ", revised=" + finalIntent);
+
+        // 关键：streaming=true 让推荐分支跳过同步 emotionService.wrap，
+        // EmotionAgent 的生成由下面 buildStreamingFlux 里的 EmotionStreamingService 接管。
+        BranchOutcome outcome = dispatch(sessionId, userId, utterance, state, revised, true);
+        AgentTraceLogger.event("STREAM_HANDLE",
+                String.format("dispatch done: hasRecItems=%s, replyPreview=%s",
+                        outcome.newRecItems() != null && !outcome.newRecItems().isEmpty(),
+                        outcome.reply() != null && outcome.reply().speechText() != null
+                                ? outcome.reply().speechText().substring(0, Math.min(50, outcome.reply().speechText().length()))
+                                : "null"));
+
+        // === 流式输出（从 dispatch 结果构建 Flux） ===
+        // traceId 透传给异步链路，doFinally 里负责 endTrace
+        IntentEnum finalIntentRef = finalIntent;
+        return buildStreamingFlux(sessionId, userId, utterance, state, finalIntentRef,
+                revised.mergedSlots(), outcome, sample, traceId, t0);
+    }
+
+    /**
+     * 将单次同步 EmotionResult 转为 Flux<StreamChunk>（用于非推荐分支：订单确认短路）。
+     * 发出顺序：PRODUCTS → TEXT → AUDIO，TEXT 先于 AUDIO 到达前端，字幕同步显示。
+     */
+    private Flux<StreamChunk> singleTurnFlux(EmotionResult result, List<RecommendedItem> items) {
+        Flux<StreamChunk> productsFlux = (items != null && !items.isEmpty())
+                ? Flux.just(StreamChunk.products(items))
+                : Flux.empty();
+
+        String speechText = result != null ? result.speechText() : null;
+        Flux<StreamChunk> textFlux = (speechText != null && !speechText.isBlank())
+                ? Flux.just(StreamChunk.text(speechText))
+                : Flux.empty();
+
+        Flux<StreamChunk> audioFlux = flowableToFlux(ttsService.synthesize(speechText))
+                .map(pcm -> StreamChunk.audio(java.nio.ByteBuffer.wrap(pcm)));
+
+        return Flux.concat(productsFlux, textFlux, audioFlux);
+    }
+
+    /**
+     * 构建 dispatch 后的流式 Flux。
+     * <p>
+     * 关键分支：
+     * <ul>
+     *   <li>推荐分支且有 items → 走 EmotionStreamingService 流式 LLM 包装</li>
+     *   <li>其他所有分支（CLARIFY-ASK / 推荐空 / CHITCHAT / OUT_OF_SCOPE / ORDER_CONFIRM）
+     *       → 直接用 outcome.reply().speechText() 走 TTS，不重复调 LLM</li>
+     * </ul>
+     * doFinally 中执行记忆写入和状态持久化。
+     */
+    private Flux<StreamChunk> buildStreamingFlux(String sessionId, Long userId, String utterance,
+                                                 SessionState state, IntentEnum finalIntent,
+                                                 Map<String, Object> mergedSlots,
+                                                 BranchOutcome outcome, Timer.Sample sample,
+                                                 String traceId, long traceStart) {
+        AgentTraceLogger.event("STREAM_FLUX",
+                "useStreamingLlm decision begins: hasItems="
+                        + (outcome.newRecItems() != null && !outcome.newRecItems().isEmpty()));
+        // 1. 产品帧先行
+        Flux<StreamChunk> productsFlux = (outcome.newRecItems() != null && !outcome.newRecItems().isEmpty())
+                ? Flux.just(StreamChunk.products(outcome.newRecItems()))
+                : Flux.empty();
+
+        // 2. 判断走流式 LLM 还是直接 TTS：
+        //    只有"推荐成功且有商品"才需要流式 LLM 生成口语化文本；
+        //    其他所有分支（澄清问句/空推荐兜底/闲聊/越界/订单确认）
+        //    都已经在 dispatch 时把成品文本写在 outcome.reply().speechText() 里，
+        //    直接拿来 TTS 即可，绝不能再调 EmotionStreamingService 把它丢掉。
+        boolean useStreamingLlm = outcome.newRecItems() != null && !outcome.newRecItems().isEmpty();
+
+        StringBuilder fullTextCollector = new StringBuilder();
+        Flux<StreamChunk> textAudioFlux;
+
+        if (useStreamingLlm) {
+            // === 流式 LLM 分支：推荐分支 ===
+            String userNeeds = slotsToUserNeeds(mergedSlots);
+            Flux<String> charFlux = emotionStreamingService.streamWrap(
+                    sessionId, utterance, userNeeds,
+                    new RecommendResult(outcome.newRecItems(), "professional"));
+            Flux<String> sentenceFlux = SentenceAggregator.aggregate(charFlux, sentenceAggregateTimeout);
+            textAudioFlux = buildTextAudioBridge(sessionId, userId, sentenceFlux, fullTextCollector);
+        } else {
+            // === 直接 TTS 分支：澄清/闲聊/越界/订单/空推荐 ===
+            String prebuiltReply = outcome.reply() != null ? outcome.reply().speechText() : null;
+            if (prebuiltReply == null || prebuiltReply.isBlank()) {
+                prebuiltReply = EmotionService.fallback(RecommendResult.EMPTY);
+            }
+            String safeReply = complianceChecker.ensureCompliant(
+                    sessionId, userId, new EmotionResult(prebuiltReply, List.of())).speechText();
+            fullTextCollector.append(safeReply);
+            // 把成品文本拆成单元素流喂给同一套 TEXT+AUDIO 桥接
+            Flux<String> singleSentenceFlux = Flux.just(safeReply);
+            // 该分支文本已合规，桥接里再过一次合规是幂等的，沿用同一通道避免特化代码
+            textAudioFlux = buildTextAudioBridge(sessionId, userId, singleSentenceFlux, new StringBuilder());
+        }
+
+        // 5. doFinally：写记忆 + 持久化状态
+        Flux<StreamChunk> withPostProcessing = Flux.concat(productsFlux, textAudioFlux)
+                .doFinally(signal -> {
+                    // Reactor 切线程后 MDC 丢失，此处恢复 traceId
+                    AgentTraceLogger.resumeTrace(traceId);
+                    AgentTraceLogger.event("STREAM_FLUX",
+                            "doFinally signal=" + signal + ", fullTextLen=" + fullTextCollector.length());
+                    try {
+                        String fullText = fullTextCollector.toString().trim();
+                        if (fullText.isBlank()) {
+                            fullText = EmotionService.fallback(
+                                    new RecommendResult(
+                                            outcome.newRecItems() != null ? outcome.newRecItems() : List.of(),
+                                            "empty"));
+                        }
+                        EmotionResult safeReply = complianceChecker.ensureCompliant(
+                                sessionId, userId, new EmotionResult(fullText, outcome.newRecItems()));
+
+                        // 写 ASSISTANT turn
+                        Instant now = Instant.now();
+                        shortTermMemory.append(sessionId, new ShortTermMemory.Turn(
+                                "ASSISTANT", safeReply.speechText(), finalIntent.name(), now));
+
+                        // 写 TURN summary
+                        String summary = turnSummarizer.summarize(utterance, finalIntent, safeReply.speechText());
+                        shortTermMemory.append(sessionId, new ShortTermMemory.Turn(
+                                "TURN", summary, finalIntent.name(), now));
+
+                        // 持久化 session_state
+                        persistState(state, finalIntent, mergedSlots, outcome);
+                    } catch (Exception e) {
+                        log.error("streamHandle doFinally failed for session={}: {}", sessionId, e.getMessage(), e);
+                    } finally {
+                        sample.stop(timersByIntent.get(finalIntent));
+                        AgentTraceLogger.exit("STREAM_HANDLE",
+                                System.currentTimeMillis() - traceStart,
+                                "finalIntent=" + finalIntent);
+                        AgentTraceLogger.endTrace();
+                    }
+                });
+
+        return withPostProcessing;
+    }
+
+    /**
+     * 句子级 Flux<String> → 单会话 TTS → Flux<StreamChunk>（TEXT + AUDIO 交替）。
+     * <p>
+     * 单订阅 + 单 TTS 会话设计：
+     * <ul>
+     *   <li>每个句子先过合规 → emit TEXT 帧 → 喂给唯一的 TTS UnicastSubject</li>
+     *   <li>TEXT 永远先于对应 AUDIO（onNext 顺序保证）</li>
+     *   <li>句子流 complete → TTS 输入 complete → TTS 会话 complete → sink complete</li>
+     * </ul>
+     *
+     * @param sentenceFlux         上游句子流（已是句子粒度，无需再聚合）
+     * @param fullTextCollector    收集完整回复文本，doFinally 用来写记忆
+     */
+    private Flux<StreamChunk> buildTextAudioBridge(String sessionId, Long userId,
+                                                   Flux<String> sentenceFlux,
+                                                   StringBuilder fullTextCollector) {
+        return Flux.create(sink -> {
+            io.reactivex.subjects.UnicastSubject<String> ttsInput = io.reactivex.subjects.UnicastSubject.create();
+
+            io.reactivex.disposables.Disposable audioSub = ttsService.streamSynthesize(
+                            ttsInput.toFlowable(io.reactivex.BackpressureStrategy.BUFFER))
+                    .subscribe(
+                            pcm -> sink.next(StreamChunk.audio(java.nio.ByteBuffer.wrap(pcm))),
+                            sink::error,
+                            sink::complete
+                    );
+
+            reactor.core.Disposable textSub = sentenceFlux.subscribe(
+                    sentence -> {
+                        String safe = complianceChecker.ensureCompliant(
+                                sessionId, userId, new EmotionResult(sentence, List.of())).speechText();
+                        sink.next(StreamChunk.text(safe));
+                        fullTextCollector.append(safe);
+                        ttsInput.onNext(safe);
+                    },
+                    e -> {
+                        ttsInput.onError(e);
+                        sink.error(e);
+                    },
+                    ttsInput::onComplete
+            );
+
+            sink.onDispose(() -> {
+                textSub.dispose();
+                audioSub.dispose();
+            });
+        });
     }
 
     /**
@@ -327,10 +587,22 @@ public class OrchestratorService {
 
     private BranchOutcome dispatch(String sessionId, Long userId, String utterance,
                                    SessionState state, RevisedIntent revised) {
+        return dispatch(sessionId, userId, utterance, state, revised, false);
+    }
+
+    /**
+     * 带 streaming 标志的 dispatch：流式模式下，推荐分支跳过 emotionService.wrap 同步调用，
+     * 把 EmotionAgent 的生成交给上层 streamHandle 走 EmotionStreamingService 流式处理，
+     * 避免双调用（既同步又流式）造成的限流和字幕重复。
+     */
+    private BranchOutcome dispatch(String sessionId, Long userId, String utterance,
+                                   SessionState state, RevisedIntent revised, boolean streaming) {
+        AgentTraceLogger.event("DISPATCH",
+                "intent=" + revised.intent() + ", streaming=" + streaming);
         return switch (revised.intent()) {
-            case PRODUCT_RECOMMENDATION -> runRecommendation(sessionId, userId, utterance, revised.mergedSlots());
-            case CLARIFY_NEEDED         -> runClarify(sessionId, userId, utterance, revised.mergedSlots());
-            case PRODUCT_COMPARE        -> runCompare(sessionId, userId, utterance, state, revised.mergedSlots());
+            case PRODUCT_RECOMMENDATION -> runRecommendation(sessionId, userId, utterance, revised.mergedSlots(), streaming);
+            case CLARIFY_NEEDED         -> runClarify(sessionId, userId, utterance, revised.mergedSlots(), streaming);
+            case PRODUCT_COMPARE        -> runCompare(sessionId, userId, utterance, state, revised.mergedSlots(), streaming);
             case ORDER_CONFIRM          -> runOrderConfirm(sessionId, userId, state, utterance);
             case CHITCHAT               -> runChitchat(sessionId, utterance);
             case OUT_OF_SCOPE           -> runOutOfScope();
@@ -341,9 +613,16 @@ public class OrchestratorService {
 
     BranchOutcome runRecommendation(String sessionId, Long userId, String utterance,
                                     Map<String, Object> slots) {
+        return runRecommendation(sessionId, userId, utterance, slots, false);
+    }
+
+    BranchOutcome runRecommendation(String sessionId, Long userId, String utterance,
+                                    Map<String, Object> slots, boolean streaming) {
+        AgentTraceLogger.enter("RUN_REC", "streaming=" + streaming + ", slots=" + slots);
         // 1. Clarify decision — ASK short-circuits.
         ClarifyResult clarify = clarifyService.decide(sessionId, utterance, slots);
         if (clarify.action() == ClarifyResult.Action.ASK) {
+            AgentTraceLogger.exit("RUN_REC", 0, "ASK shortcut");
             return new BranchOutcome(
                     new EmotionResult(clarify.questionToAsk(), List.of()),
                     SessionPhase.CLARIFY,
@@ -353,6 +632,7 @@ public class OrchestratorService {
 
         // 2. Recommendation pipeline.
         RecommendResult rec = parallelRecommendService.recommend(sessionId, userId, utterance, slots);
+        AgentTraceLogger.event("RUN_REC", "rec items=" + (rec.items() != null ? rec.items().size() : 0));
 
         // 3. Perspective discussion (D12) — only when enabled and we actually have items.
         String finalUtterance = utterance;
@@ -364,12 +644,27 @@ public class OrchestratorService {
         }
 
         // 4. Emotion wrap.
-        EmotionResult reply = emotionService.wrap(sessionId, finalUtterance, rec);
+        // 流式模式 + 有商品 → 跳过同步 wrap，让 streamHandle 走 EmotionStreamingService。
+        // BranchOutcome.reply 的 speechText 仅作为流失败时的兜底文案。
+        if (streaming && rec.items() != null && !rec.items().isEmpty()) {
+            AgentTraceLogger.exit("RUN_REC", 0, "streaming + hasItems → skip sync wrap");
+            EmotionResult placeholder = new EmotionResult(EmotionService.fallback(rec), rec.items());
+            return new BranchOutcome(placeholder, SessionPhase.RECOMMEND, null, rec.items());
+        }
+        String userNeeds = slotsToUserNeeds(slots);
+
+        EmotionResult reply = emotionService.wrap(sessionId, finalUtterance, userNeeds, rec);
+        AgentTraceLogger.exit("RUN_REC", 0, "sync wrap done");
         return new BranchOutcome(reply, SessionPhase.RECOMMEND, null, rec.items());
     }
 
     BranchOutcome runClarify(String sessionId, Long userId, String utterance,
                              Map<String, Object> slots) {
+        return runClarify(sessionId, userId, utterance, slots, false);
+    }
+
+    BranchOutcome runClarify(String sessionId, Long userId, String utterance,
+                             Map<String, Object> slots, boolean streaming) {
         ClarifyResult clarify = clarifyService.decide(sessionId, utterance, slots);
         if (clarify.action() == ClarifyResult.Action.ASK) {
             return new BranchOutcome(
@@ -380,15 +675,20 @@ public class OrchestratorService {
         }
         // ClarifyService says READY despite the LLM saying CLARIFY — slot rules
         // disagree with the model. Trust the rules and run the full pipeline.
-        return runRecommendation(sessionId, userId, utterance, slots);
+        return runRecommendation(sessionId, userId, utterance, slots, streaming);
     }
 
     BranchOutcome runCompare(String sessionId, Long userId, String utterance,
                              SessionState state, Map<String, Object> slots) {
+        return runCompare(sessionId, userId, utterance, state, slots, false);
+    }
+
+    BranchOutcome runCompare(String sessionId, Long userId, String utterance,
+                             SessionState state, Map<String, Object> slots, boolean streaming) {
         LastRecommendationsSnapshot snap = readLastRecommendations(state);
         if (snap == null || snap.items().isEmpty()) {
             log.info("PRODUCT_COMPARE without prior recommendations — falling back to RECOMMENDATION");
-            return runRecommendation(sessionId, userId, utterance, slots);
+            return runRecommendation(sessionId, userId, utterance, slots, streaming);
         }
 
         Map<String, Object> compareSlots = new HashMap<>(slots);
@@ -408,7 +708,13 @@ public class OrchestratorService {
         }
 
         RecommendResult rec = parallelRecommendService.recommend(sessionId, userId, utterance, compareSlots);
-        EmotionResult reply = emotionService.wrap(sessionId, utterance, rec);
+        // 流式模式同样跳过同步 wrap
+        if (streaming && rec.items() != null && !rec.items().isEmpty()) {
+            EmotionResult placeholder = new EmotionResult(EmotionService.fallback(rec), rec.items());
+            return new BranchOutcome(placeholder, SessionPhase.RECOMMEND, null, rec.items());
+        }
+        String compareNeeds = slotsToUserNeeds(compareSlots);
+        EmotionResult reply = emotionService.wrap(sessionId, utterance, compareNeeds, rec);
         return new BranchOutcome(reply, SessionPhase.RECOMMEND, null, rec.items());
     }
 
@@ -568,7 +874,7 @@ public class OrchestratorService {
     }
 
     BranchOutcome runChitchat(String sessionId, String utterance) {
-        EmotionResult raw = emotionService.wrap(sessionId, utterance, RecommendResult.EMPTY);
+        EmotionResult raw = emotionService.wrap(sessionId, utterance, "", RecommendResult.EMPTY);
         // EmotionService produces a recommendation-style fallback when items are empty;
         // swap it for a chitchat-style reply (D9). Drop this once the EmotionAgent
         // prompt understands chitchat mode natively.
@@ -669,4 +975,33 @@ public class OrchestratorService {
             String pendingAsk,
             List<RecommendedItem> newRecItems
     ) {}
+
+    /**
+     * 将 slots Map 转换为 userNeeds 字符串，格式：key1=val1,key2=val2,...
+     * 供 EmotionAgent 的合并 prompt 引用用户需求关键词。
+     */
+    static String slotsToUserNeeds(Map<String, Object> slots) {
+        if (slots == null || slots.isEmpty()) {
+            return "";
+        }
+        return slots.entrySet().stream()
+                .filter(e -> e.getValue() != null)
+                .map(e -> e.getKey() + "=" + e.getValue())
+                .collect(Collectors.joining(","));
+    }
+
+    /**
+     * 将 RxJava2 Flowable 转为 Reactor Flux。
+     * TTSService 返回 Flowable，OrchestratorService 内部统一用 Flux。
+     */
+    private static <T> Flux<T> flowableToFlux(io.reactivex.Flowable<T> flowable) {
+        return Flux.create(sink -> {
+            io.reactivex.disposables.Disposable d = flowable.subscribe(
+                    sink::next,
+                    sink::error,
+                    sink::complete
+            );
+            sink.onDispose(d::dispose);
+        });
+    }
 }

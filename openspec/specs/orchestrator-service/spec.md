@@ -8,18 +8,20 @@ Single-entry orchestrator capability for the voice shopping assistant. `Orchestr
 
 ### Requirement: OrchestratorService 单一入口
 
-系统 SHALL 在 `com.voiceshopping.business.orchestrator` 包下提供 `OrchestratorService`，对外只暴露一个方法：
+系统 SHALL 在 `com.voiceshopping.business.orchestrator` 包下提供 `OrchestratorService`，对外暴露两个方法：
 
 ```java
 EmotionResult handle(String sessionId, Long userId, String utterance);
+Flux<StreamChunk> streamHandle(String sessionId, Long userId, String utterance);
 ```
 
-该方法 MUST 串联意图理解、意图兜底矫正、按意图分支执行、合规兜底、记忆/状态写回，并返回最终 EmotionResult。
+`handle()` 方法保持原有同步行为不变，用于 HTTP 调试接口等场景。该方法 MUST 串联意图理解、意图兜底矫正、按意图分支执行、合规兜底、记忆/状态写回，并返回最终 EmotionResult。
+`streamHandle()` 方法提供流式输出，具体帧协议和流式后置行为详见 `stream-chunk-protocol` capability spec。
 
-#### Scenario: 接收非空入参完成一轮对话
+#### Scenario: handle 仍可同步调用
 
 - **WHEN** `handle("sess-1", 100L, "想买双跑鞋")` 被调用且 session 已存在
-- **THEN** 方法返回非空 EmotionResult，session_state 已被更新到 PG/Redis，短期记忆中已写入对应的 USER 与 ASSISTANT turn
+- **THEN** 方法返回非空 EmotionResult，行为与修改前完全一致，session_state 已被更新到 PG/Redis，短期记忆中已写入对应的 ASSISTANT 与 TURN turn
 
 ### Requirement: handle 全流程 Timer 监控
 
@@ -122,12 +124,13 @@ EmotionResult handle(String sessionId, Long userId, String utterance);
 1. 调用 `ClarifyService.decide`：若返回 ASK 则提前返回（同 CLARIFY 分支处理），若 READY 继续。
 2. 调用 `ParallelRecommendService.recommend(sessionId, userId, utterance, mergedSlots)` 得到 RecommendResult。
 3. 当 `voice-shopping.perspective.enabled = true` 且 RecommendResult.items 非空时，调用 `PerspectiveHubService.discuss`，将返回的多视角点评文本拼接到 utterance 末尾形成新 utterance。
-4. 调用 `EmotionService.wrap(sessionId, augmentedUtterance, recommendResult)` 得到 EmotionResult。
+4. 调用 `EmotionService.wrap(sessionId, augmentedUtterance, userNeeds, recommendResult)` 得到 EmotionResult。userNeeds 由 mergedSlots 转换而来，格式为 `key1=val1,key2=val2,...`。
 5. 用 RecommendResult 的 items 计算并写入 `last_recommendations` 字段（见对应 requirement）。
 
-#### Scenario: 完整推荐链路
+#### Scenario: 完整推荐链路传 userNeeds
 
-- **WHEN** 意图为 PRODUCT_RECOMMENDATION，槽位充足，RecommendResult 含 3 件商品
+- **WHEN** 意图为 PRODUCT_RECOMMENDATION，mergedSlots = {category: "跑鞋", budget: 500}，RecommendResult 含 3 件商品
+- **THEN** EmotionService.wrap 接收 userNeeds = "category=跑鞋,budget=500"
 - **THEN** 返回的 EmotionResult 由 EmotionService 基于 3 件商品生成，session_state.lastRecommendations 已被更新
 
 #### Scenario: 推荐结果为空仍走情感应答
@@ -160,7 +163,7 @@ EmotionResult handle(String sessionId, Long userId, String utterance);
 - 当 priceDirection = "expensive"：写入 `priceMin = minPrice * 1.2`（不修改 budget）。
 - 总是写入 `excludeProductIds = [上轮所有 productId]`。
 
-随后调用 `ParallelRecommendService.recommend` → `EmotionService.wrap`。
+随后调用 `ParallelRecommendService.recommend` → `EmotionService.wrap`。`EmotionService.wrap` 调用 SHALL 传入 userNeeds 参数，由 compareSlots 转换而来。
 
 若 lastRecommendations 缺失或反序列化失败，分支 MUST 退化为 PRODUCT_RECOMMENDATION 完整链路（含 ClarifyService.decide）。
 
@@ -173,6 +176,11 @@ EmotionResult handle(String sessionId, Long userId, String utterance);
 
 - **WHEN** lastRecommendations.minPrice = 379、priceDirection = "expensive"，原 slots.budget = 1000
 - **THEN** 传给 ParallelRecommendService 的 slots.priceMin = 454.80，slots.budget 仍为 1000
+
+#### Scenario: compare 分支传 userNeeds
+
+- **WHEN** PRODUCT_COMPARE 分支，compareSlots = {category: "跑鞋", priceMin: 454.80, excludeProductIds: [...]}
+- **THEN** EmotionService.wrap 接收由 compareSlots 转换的 userNeeds
 
 #### Scenario: 上轮 last_recommendations 缺失退化为推荐
 
@@ -236,6 +244,18 @@ EmotionResult handle(String sessionId, Long userId, String utterance);
 - **WHEN** 走短路且 handleOrderConfirm 返回正常 BranchOutcome
 - **THEN** `voice.shopping.orchestrator.handle` Timer 以 `intent=ORDER_CONFIRM` 记录耗时
 
+### Requirement: OrchestratorService 新增流式依赖注入
+
+系统 SHALL 在 `OrchestratorService` 构造器追加注入：
+- `EmotionStreamingService` —— 新增
+- `TTSService` —— 新增（从 ai 模块引入）
+
+依赖 final 字段、构造器注入，与现有依赖注入风格一致。
+
+#### Scenario: 两个依赖完整注入
+- **WHEN** Spring 容器启动
+- **THEN** OrchestratorService bean 含 emotionStreamingService / ttsService 两个非 null 字段
+
 ### Requirement: OrchestratorService 新增订单依赖注入
 
 系统 SHALL 在 `OrchestratorService` 构造器追加注入：
@@ -251,12 +271,12 @@ EmotionResult handle(String sessionId, Long userId, String utterance);
 
 ### Requirement: CHITCHAT 分支闲聊兜底
 
-意图为 CHITCHAT 时，系统 SHALL 调用 `EmotionService.wrap(sessionId, utterance, RecommendResult.EMPTY)`。若 EmotionService 返回的 speechText 为推荐式空兜底（"这个条件下合适的不多，要不要放宽点预算再看看？"）时，系统 SHALL 用闲聊兜底文案替换："不太懂这个，我们聊点你想买啥呗？"。
+意图为 CHITCHAT 时，系统 SHALL 调用 `EmotionService.wrap(sessionId, utterance, "", RecommendResult.EMPTY)`。若 EmotionService 返回的 speechText 为推荐式空兜底（"这个条件下合适的不多，要不要放宽点预算再看看？"）时，系统 SHALL 用闲聊兜底文案替换："不太懂这个，我们聊点你想买啥呗？"。userNeeds 传空字符串。
 
-#### Scenario: 闲聊调用 EmotionService 不带商品
+#### Scenario: 闲聊传空 userNeeds
 
 - **WHEN** 意图为 CHITCHAT
-- **THEN** 调用 EmotionService.wrap 时第三个参数是 RecommendResult.EMPTY
+- **THEN** 调用 EmotionService.wrap 时 userNeeds 参数为空字符串 ""，RecommendResult 参数是 RecommendResult.EMPTY
 
 ### Requirement: OUT_OF_SCOPE 分支固定话术
 

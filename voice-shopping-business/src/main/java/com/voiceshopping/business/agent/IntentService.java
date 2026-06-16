@@ -56,6 +56,18 @@ public class IntentService {
      * @return parsed intent result, or OUT_OF_SCOPE with 0.3 confidence on failure
      */
     public IntentResult classify(String sessionId, String utterance) {
+        long t0 = System.currentTimeMillis();
+        com.voiceshopping.business.orchestrator.AgentTraceLogger.enter("INTENT",
+                "sessionId=" + sessionId + ", utterance=" + utterance);
+        try {
+            return classifyInternal(sessionId, utterance);
+        } finally {
+            com.voiceshopping.business.orchestrator.AgentTraceLogger.exit("INTENT",
+                    System.currentTimeMillis() - t0, "");
+        }
+    }
+
+    private IntentResult classifyInternal(String sessionId, String utterance) {
         // Build user input with recent history context
         String userInput = buildUserInput(sessionId, utterance);
 

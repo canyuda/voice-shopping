@@ -36,10 +36,8 @@ import static org.mockito.Mockito.when;
 /**
  * Equivalence tests: same inputs MUST produce equivalent outputs from
  * {@link RecommendOrchestrator} and {@link ParallelRecommendService}.
- * <p>
- * Reasons are LLM-generated and non-deterministic, so we stub
- * {@link RecommendReasonService} to return its input list unchanged. This
- * isolates the parallel-vs-serial structural equivalence.
+ * Reasons are now deferred to the merged emotion prompt, so both
+ * implementations return items with reason=null directly.
  */
 class ParallelRecommendEquivalenceTest {
 
@@ -47,7 +45,6 @@ class ParallelRecommendEquivalenceTest {
     private EmbeddingService embeddingService;
     private RecommendCandidateRetriever retriever;
     private ProfileReranker reranker;
-    private RecommendReasonService reasonService;
     private SessionScopeCache scopeCache;
     private ScopeFilterBuilder scopeFilterBuilder;
     private SqlFilterBuilder sqlFilterBuilder;
@@ -61,8 +58,7 @@ class ParallelRecommendEquivalenceTest {
         embeddingService = mock(EmbeddingService.class);
         retriever = mock(RecommendCandidateRetriever.class);
         reranker = mock(ProfileReranker.class);
-        reasonService = mock(RecommendReasonService.class);
-        scopeCache = mock(SessionScopeCache.class);
+scopeCache = mock(SessionScopeCache.class);
         scopeFilterBuilder = mock(ScopeFilterBuilder.class);
         sqlFilterBuilder = mock(SqlFilterBuilder.class);
 
@@ -74,9 +70,9 @@ class ParallelRecommendEquivalenceTest {
         when(sqlFilterBuilder.merge(any(), any())).thenAnswer(inv -> inv.getArgument(0));
 
         serial = new RecommendOrchestrator(profileService, embeddingService, retriever,
-                reranker, reasonService, scopeCache, scopeFilterBuilder, sqlFilterBuilder);
+                reranker, scopeCache, scopeFilterBuilder, sqlFilterBuilder);
         parallel = new ParallelRecommendService(profileService, embeddingService, retriever,
-                reranker, reasonService, scopeCache, scopeFilterBuilder, sqlFilterBuilder);
+                reranker, scopeCache, scopeFilterBuilder, sqlFilterBuilder);
     }
 
     private RecommendedItem item(long id, String name, double price) {
@@ -102,9 +98,6 @@ class ParallelRecommendEquivalenceTest {
         // rerank returns the candidates in a deterministic order (reverse for distinctness)
         List<RecommendedItem> reranked = List.of(item(3, "C", 300), item(2, "B", 200), item(1, "A", 100), item(4, "D", 400));
         when(reranker.rerank(eq(candidates), any(), any())).thenReturn(reranked);
-
-        // attachReasons returns the input topK as-is (deterministic for assertions)
-        when(reasonService.attachReasons(anyString(), anyString(), any())).thenAnswer(inv -> inv.getArgument(2));
 
         Map<String, Object> slots = Map.of("category", "跑鞋", "budget", 500);
 
@@ -133,7 +126,6 @@ class ParallelRecommendEquivalenceTest {
         assertSame(RecommendResult.EMPTY, s);
         assertSame(RecommendResult.EMPTY, p);
         verify(reranker, never()).rerank(any(), any(), any());
-        verify(reasonService, never()).attachReasons(anyString(), anyString(), any());
     }
 
     @Test
