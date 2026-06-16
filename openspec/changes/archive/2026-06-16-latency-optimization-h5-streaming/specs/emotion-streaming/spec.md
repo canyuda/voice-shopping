@@ -46,7 +46,7 @@ static Flux<String> aggregate(Flux<String> charFlux, Duration candidateTimeout);
 - **THEN** 聚合后 emit "别纠结，"
 
 #### Scenario: 逗号 + 50ms 内有新字 → 继续缓冲
-- **WHEN** 字级流 emit "别纠结"，"，" 后 30ms 内有新字 "鸡哥"
+- **WHEN** 字级流 emit "别纠结"，"，" 后 30ms 内有新字 ""
 - **THEN** 不在逗号处切分，继续缓冲直到遇到确定断点或超时
 
 #### Scenario: 流结束 flush 剩余

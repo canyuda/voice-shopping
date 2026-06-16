@@ -511,33 +511,31 @@ class OrchestratorServiceTest {
     }
 
     // ---------------------------------------------------------------------
-    // 7.11 — Chitchat fallback text replacement
+    // 7.11 — Chitchat 直接从 ChitchatReplyPool 抽取兜底文案，不调 EmotionAgent
     // ---------------------------------------------------------------------
 
     @Test
-    void chitchat_replacesEmotionEmptyFallbackWithChitchatText() {
+    void chitchat_skipsEmotionAgentAndReturnsPoolReply() {
         when(intentService.classify(eq(SESSION_ID), anyString()))
                 .thenReturn(new IntentResult(IntentEnum.CHITCHAT, Map.of(), 0.9));
-        // EmotionService produces its recommendation-style empty fallback.
-        when(emotionService.wrap(eq(SESSION_ID), anyString(), anyString(), any()))
-                .thenReturn(new EmotionResult(
-                        "这个条件下合适的不多，要不要放宽点预算再看看？", List.of()));
 
         EmotionResult reply = buildOrchestrator(false).handle(SESSION_ID, USER_ID, "讲个笑话");
 
-        assertThat(reply.speechText()).isEqualTo("不太懂这个，我们聊点你想买啥呗？");
+        // 不调 EmotionAgent
+        verify(emotionService, never()).wrap(anyString(), anyString(), anyString(), any());
+        // 返回的文案应在 ChitchatReplyPool 池内
+        assertThat(com.voiceshopping.business.agent.ChitchatReplyPool.repliesSnapshot())
+                .contains(reply.speechText());
     }
 
     @Test
-    void chitchat_keepsNonFallbackSpeechAsIs() {
+    void chitchat_doesNotIncludeProducts() {
         when(intentService.classify(eq(SESSION_ID), anyString()))
                 .thenReturn(new IntentResult(IntentEnum.CHITCHAT, Map.of(), 0.9));
-        when(emotionService.wrap(eq(SESSION_ID), anyString(), anyString(), any()))
-                .thenReturn(new EmotionResult("哈哈那确实有趣", List.of()));
 
         EmotionResult reply = buildOrchestrator(false).handle(SESSION_ID, USER_ID, "讲个笑话");
 
-        assertThat(reply.speechText()).isEqualTo("哈哈那确实有趣");
+        assertThat(reply.displayBlocks()).isEmpty();
     }
 
     // ---------------------------------------------------------------------

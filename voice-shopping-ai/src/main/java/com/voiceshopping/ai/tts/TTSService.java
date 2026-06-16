@@ -4,6 +4,7 @@ import com.alibaba.dashscope.audio.ttsv2.SpeechSynthesisAudioFormat;
 import com.alibaba.dashscope.audio.ttsv2.SpeechSynthesisParam;
 import com.alibaba.dashscope.audio.ttsv2.SpeechSynthesizer;
 import com.voiceshopping.ai.config.VoiceProperties;
+import com.voiceshopping.common.cost.CostMetricsLogger;
 import io.reactivex.Flowable;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
@@ -11,6 +12,8 @@ import org.springframework.stereotype.Service;
 
 import java.nio.ByteBuffer;
 import java.util.List;
+import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicLong;
 
 /**
  * Streaming TTS service backed by DashScope SpeechSynthesizer (ttsv2, CosyVoice).
@@ -62,6 +65,11 @@ public class TTSService {
         Flowable<String> textStream = Flowable.fromIterable(sentences)
                 .doOnNext(s -> log.info("[TTS.synthesize] feeding sentence to DashScope: {}", s));
 
+        // 成本埋点：记录起始时间，complete 时统一输出
+        final long ttsT0 = System.currentTimeMillis();
+        final int totalChars = text.length();
+        final String ttsModel = voiceProperties.tts().model();
+
         try {
             return synthesizer.streamingCallAsFlowable(textStream)
                     .filter(result -> result.getAudioFrame() != null)
@@ -71,8 +79,12 @@ public class TTSService {
                         frame.get(audio);
                         return audio;
                     })
-                    .doOnComplete(() -> log.debug("TTS synthesis complete for text: {}",
-                            text.length() > 50 ? text.substring(0, 50) + "..." : text))
+                    .doOnComplete(() -> {
+                        log.debug("TTS synthesis complete for text: {}",
+                                text.length() > 50 ? text.substring(0, 50) + "..." : text);
+                        CostMetricsLogger.logTts(ttsModel, totalChars,
+                                System.currentTimeMillis() - ttsT0);
+                    })
                     .doOnError(e -> log.error("TTS synthesis error", e));
         } catch (Exception e) {
             return Flowable.error(e);
@@ -104,10 +116,18 @@ public class TTSService {
 
         // 在每个句子喂给 DashScope 前打日志，与 OkHttpWebSocketClient.Sending message
         // 的 continue-task 一一对应；如果一段文本被喂了两次，会立即在日志里看到。
-        java.util.concurrent.atomic.AtomicInteger seq = new java.util.concurrent.atomic.AtomicInteger();
+        // 同时累加 totalChars 用于成本埋点。
+        AtomicInteger seq = new AtomicInteger();
+        AtomicInteger totalChars = new AtomicInteger();
+        long ttsT0 = System.currentTimeMillis();
+        String ttsModel = voiceProperties.tts().model();
+
         Flowable<String> tracedStream = Flowable.fromPublisher(sentenceStream)
-                .doOnNext(s -> log.info("[TTS.streamSynthesize] #{} feeding sentence to DashScope: {}",
-                        seq.incrementAndGet(), s))
+                .doOnNext(s -> {
+                    log.info("[TTS.streamSynthesize] #{} feeding sentence to DashScope: {}",
+                            seq.incrementAndGet(), s);
+                    totalChars.addAndGet(s.length());
+                })
                 .doOnComplete(() -> log.info("[TTS.streamSynthesize] input stream complete, total sentences fed={}",
                         seq.get()));
 
@@ -120,7 +140,12 @@ public class TTSService {
                         frame.get(audio);
                         return audio;
                     })
-                    .doOnComplete(() -> log.debug("TTS stream synthesis complete"))
+                    .doOnComplete(() -> {
+                        log.debug("TTS stream synthesis complete");
+                        // 流式总埋点（一轮 1 条）
+                        CostMetricsLogger.logTts(ttsModel, totalChars.get(),
+                                System.currentTimeMillis() - ttsT0);
+                    })
                     .doOnError(e -> log.error("TTS stream synthesis error", e));
         } catch (Exception e) {
             return Flowable.error(e);

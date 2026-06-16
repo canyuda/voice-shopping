@@ -75,14 +75,37 @@ public class EmotionStreamingService {
                     .textContent(userMsg)
                     .build();
 
+            // 流式起始时间，用于计算 AGENT_RESULT 到达时的总耗时
+            final long llmT0 = System.currentTimeMillis();
+            final int userMsgLen = userMsg.length();
+            // 复制 sessionId/userId 到本地 final，给闭包用
+            final String capturedSessionId = sessionId;
+
             // agent.stream() 返回 Flux<Event>，包含多种 EventType：
             // - REASONING + isLast=false : 字级增量（流式吐字）← 只要这个
             // - REASONING + isLast=true  : 最终完整文本重放（整段重放）✗ 必须过滤
-            // - AGENT_RESULT             : 最终完整结果（整段重放）✗ 必须过滤
+            // - AGENT_RESULT             : 最终完整结果（整段重放）✗ 必须过滤；但作为成本埋点的 ChatUsage 来源
             // - SUMMARY/HINT 等          : 其他元数据事件
             // 必须同时过滤 isLast=true，否则最后那个完整重放会被当成新句子
             // 再 emit 一次到 SentenceAggregator，导致 TTS 把整段话再说一遍。
             return agent.stream(userMessage)
+                    .doOnNext(event -> {
+                        // 仅在 AGENT_RESULT 事件触发时埋点（这是流式总耗时和 token 统计的唯一时机）
+                        if (event != null
+                                && event.getType() == io.agentscope.core.agent.EventType.AGENT_RESULT) {
+                            io.agentscope.core.model.ChatUsage usage =
+                                    event.getMessage() != null ? event.getMessage().getChatUsage() : null;
+                            String fullText = event.getMessage() != null
+                                    ? event.getMessage().getTextContent() : null;
+                            com.voiceshopping.common.cost.CostMetricsLogger.logLlm(
+                                    "emotion_stream", "qwen-max",
+                                    userMsgLen, fullText != null ? fullText.length() : 0,
+                                    usage != null ? usage.getInputTokens() : null,
+                                    usage != null ? usage.getOutputTokens() : null,
+                                    usage != null ? usage.getTotalTokens() : null,
+                                    System.currentTimeMillis() - llmT0, false);
+                        }
+                    })
                     .filter(event -> event != null
                             && event.getType() == io.agentscope.core.agent.EventType.REASONING
                             && !event.isLast())

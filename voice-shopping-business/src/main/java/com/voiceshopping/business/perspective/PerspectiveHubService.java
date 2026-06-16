@@ -69,15 +69,21 @@ public class PerspectiveHubService {
                 // Sequential no-arg call(): announcement is already in each agent's memory,
                 // and auto-broadcast feeds prior speeches into subsequent agents' memory.
                 log.debug("[perspective:{}] price agent speaking", sessionId);
+                long priceT0 = System.currentTimeMillis();
                 Msg priceMsg = team.priceAgent().call().block();
+                logCost("perspective_price", priceMsg, System.currentTimeMillis() - priceT0);
                 log.debug("[perspective:{}] price agent done", sessionId);
 
                 log.debug("[perspective:{}] pro agent speaking", sessionId);
+                long proT0 = System.currentTimeMillis();
                 Msg proMsg = team.proAgent().call().block();
+                logCost("perspective_pro", proMsg, System.currentTimeMillis() - proT0);
                 log.debug("[perspective:{}] pro agent done", sessionId);
 
                 log.debug("[perspective:{}] beginner agent speaking", sessionId);
+                long beginnerT0 = System.currentTimeMillis();
                 Msg beginnerMsg = team.beginnerAgent().call().block();
+                logCost("perspective_beginner", beginnerMsg, System.currentTimeMillis() - beginnerT0);
                 log.debug("[perspective:{}] beginner agent done", sessionId);
 
                 return String.format("价格顾问：%s%n专业用户：%s%n入门买家：%s",
@@ -88,6 +94,28 @@ public class PerspectiveHubService {
                     sessionId, e.getMessage());
             return "";
         }
+    }
+
+    /**
+     * 单个 perspective agent 调用结束后的成本埋点。
+     */
+    private static void logCost(String agent, Msg response, long durationMs) {
+        if (response == null) {
+            // 异常路径，token 字段缺省
+            com.voiceshopping.common.cost.CostMetricsLogger.logLlm(
+                    agent, "qwen-plus", 0, 0, null, null, null, durationMs, false);
+            return;
+        }
+        io.agentscope.core.model.ChatUsage usage = response.getChatUsage();
+        String text = response.getTextContent();
+        com.voiceshopping.common.cost.CostMetricsLogger.logLlm(
+                agent, "qwen-plus",
+                0,  // perspective 的 inputChars 不易精确统计（announcement + memory 累计），暂留 0
+                text != null ? text.length() : 0,
+                usage != null ? usage.getInputTokens() : null,
+                usage != null ? usage.getOutputTokens() : null,
+                usage != null ? usage.getTotalTokens() : null,
+                durationMs, false);
     }
 
     private String formatAnnouncement(String utterance, List<RecommendedItem> items) {

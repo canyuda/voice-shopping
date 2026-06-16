@@ -6,24 +6,23 @@ import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
 
 /**
- * Centralized policy for the four worker agents' {@link io.agentscope.core.memory.InMemoryMemory}
+ * Centralized policy for the three worker agents' {@link io.agentscope.core.memory.InMemoryMemory}
  * lifecycle. Business services MUST go through {@code before*Call} hooks instead of touching
  * {@code agent.getMemory().clear()} / {@code deleteMessage(...)} directly, so memory hygiene
  * stays in one place.
  * <ul>
  *   <li>Intent — clear every turn (stateless classification).</li>
  *   <li>Clarify — clear every turn (each turn re-derives questions from current slots).</li>
- *   <li>Recommend — keep last 8 messages (~4 user/assistant rounds) for soft continuity.</li>
  *   <li>Emotion — keep last 40 messages (~20 rounds) for mood tracking.</li>
  * </ul>
+ * 历史：旧版本含 beforeRecommendCall（保留 RecAgent 8 条记忆），
+ * 已随 RecAgent 一并删除。
  */
 @Component
 public class AgentMemoryPolicy {
 
     private static final Logger log = LoggerFactory.getLogger(AgentMemoryPolicy.class);
 
-    /** Recommend agent retains ~4 user/assistant rounds. */
-    static final int REC_LIMIT = 8;
     /** Emotion agent retains ~20 user/assistant rounds for mood tracking. */
     static final int EMOTION_LIMIT = 40;
 
@@ -37,11 +36,6 @@ public class AgentMemoryPolicy {
     public void beforeClarifyCall(ReActAgent agent) {
         agent.getMemory().clear();
         log.debug("[AgentMemoryPolicy] clarify memory cleared");
-    }
-
-    /** Trim recommend agent memory to {@link #REC_LIMIT}. */
-    public void beforeRecommendCall(ReActAgent agent) {
-        trimToLast(agent, REC_LIMIT, "rec");
     }
 
     /** Trim emotion agent memory to {@link #EMOTION_LIMIT}. */

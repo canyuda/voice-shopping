@@ -6,6 +6,30 @@
 
 ## Requirements
 
+### Requirement: 多视角点评团开关
+
+系统 SHALL 通过 Spring 配置 `voice-shopping.perspective.enabled`（boolean）决定是否启用 PerspectiveHubService。
+
+默认值 MUST 为 `false`。
+
+- 开关 false（默认）：MUST NOT 调用 PerspectiveHubService，不产生 perspective 相关 LLM 成本
+- 开关 true：MUST 仅在 PRODUCT_RECOMMENDATION 分支、商品推荐之后、情感应答之前调用一次
+
+代码（PerspectiveAgentBuilder / PerspectiveHubService / MultiAgentModelConfig / multiAgentChatModel Bean）保留不删，方便未来 A/B 测试或转化率验证时一行配置即可恢复。
+
+#### Scenario: 开关默认关闭时不调用
+- **WHEN** application.yml 未显式配置 `voice-shopping.perspective.enabled`
+- **THEN** Bean 注入时 perspectiveEnabled=false
+- **THEN** PRODUCT_RECOMMENDATION 分支不调用 `PerspectiveHubService.discuss`
+
+#### Scenario: 开关显式开启时拼接到 utterance
+- **WHEN** voice-shopping.perspective.enabled = true，PerspectiveHubService 返回非空多视角文本
+- **THEN** EmotionService.wrap 接收的 utterance 参数 = 原始 utterance + "\n\n[多视角点评]\n" + 该文本
+
+#### Scenario: 开关关闭时 multiAgentChatModel Bean 仍存在但不被使用
+- **WHEN** Spring 容器启动，perspective.enabled=false
+- **THEN** 容器中仍存在 `multiAgentChatModel` Bean（被 PerspectiveAgentBuilder 注入），但 PerspectiveHubService.discuss 不被调用，故该 Bean 实际不发起 DashScope 请求
+
 ### Requirement: MultiAgentModelConfig 注册 multiAgentChatModel Bean
 系统 SHALL 在 `com.voiceshopping.ai.model` 包下提供 `MultiAgentModelConfig`，注册名为 `multiAgentChatModel` 的 `DashScopeChatModel` Bean，用于多 Agent `MsgHub` 场景。
 
@@ -75,8 +99,9 @@
    入门买家：<beginnerMsg.getTextContent()>
    ```
    单个 `Msg` 为 null 或 `getTextContent()` 为 null/blank 时，对应位置 MUST 输出空字符串而非字面量 `null`。
-8. 任意步骤抛出异常时，整个方法 MUST 捕获并返回 `""`，并以 WARN 级别记录日志（含 sessionId 与异常 message），不得向上抛出。
-9. try 块退出时 `MsgHub.close()` MUST 自动执行（依赖 `AutoCloseable` 实现）。
+8. MUST 在三个 agent 各自调用完成后通过 `CostMetricsLogger.logLlm` 埋点，agent 分别为 `perspective_price` / `perspective_pro` / `perspective_beginner`。
+9. 任意步骤抛出异常时，整个方法 MUST 捕获并返回 `""`，并以 WARN 级别记录日志（含 sessionId 与异常 message），不得向上抛出。
+10. try 块退出时 `MsgHub.close()` MUST 自动执行（依赖 `AutoCloseable` 实现）。
 
 #### Scenario: 正常流程返回三段拼接文本
 - **WHEN** items 含 3 个商品，三个 agent 均正常响应

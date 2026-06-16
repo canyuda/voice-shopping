@@ -29,8 +29,8 @@ userNeeds 由 slots 转换而来，格式为 `slot1Key=slot1Value,slot2Key=slot2
 - **THEN** EmotionResult.displayBlocks 保留这些字段供前端展示
 
 #### Scenario: 模型偶发 markdown 包裹输出
-- **WHEN** Agent 返回 "\`\`\`json\n别纠结，鸡哥给你挑了三款。\`\`\`"
-- **THEN** parseSpeech 正确提取 "别纠结，鸡哥给你挑了三款。"
+- **WHEN** Agent 返回 "\`\`\`json\n别纠结，给你挑了三款。\`\`\`"
+- **THEN** parseSpeech 正确提取 "别纠结，给你挑了三款。"
 
 ## ADDED Requirements
 

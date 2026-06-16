@@ -1,0 +1,49 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Spring Boot logback 配置：
+  - 默认 console 输出沿用 Spring Boot 内置定义（base.xml）
+  - 新增独立的 CostMetrics logger，仅写到 logs/cost-metrics.log
+    用于成本埋点的 logfmt 格式数据，不污染主日志
+-->
+<configuration>
+    <!-- 沿用 Spring Boot 默认 console + file 配置 -->
+    <include resource="org/springframework/boot/logging/logback/defaults.xml"/>
+    <include resource="org/springframework/boot/logging/logback/console-appender.xml"/>
+
+    <!-- 主应用日志走 console（Spring Boot 默认行为） -->
+    <root level="INFO">
+        <appender-ref ref="CONSOLE"/>
+    </root>
+
+    <!-- 业务包默认 DEBUG（沿用 application.yml 的 logging.level.com.voiceshopping=DEBUG） -->
+    <logger name="com.voiceshopping" level="DEBUG"/>
+
+    <!--
+      CostMetrics 独立日志：单行 logfmt 格式，按天滚动 30 天保留。
+      - additivity=false：不向上传播到 root，避免主日志被污染
+      - 用 AsyncAppender 包装，避免 IO 阻塞业务主线程
+      - pattern 仅含时间戳 + 消息体，方便外部工具直接解析
+    -->
+    <appender name="COST_FILE" class="ch.qos.logback.core.rolling.RollingFileAppender">
+        <file>logs/cost-metrics.log</file>
+        <rollingPolicy class="ch.qos.logback.core.rolling.TimeBasedRollingPolicy">
+            <fileNamePattern>logs/cost-metrics.%d{yyyy-MM-dd}.log.gz</fileNamePattern>
+            <maxHistory>30</maxHistory>
+        </rollingPolicy>
+        <encoder>
+            <charset>UTF-8</charset>
+            <pattern>%d{yyyy-MM-dd HH:mm:ss.SSS} %msg%n</pattern>
+        </encoder>
+    </appender>
+
+    <appender name="COST_ASYNC" class="ch.qos.logback.classic.AsyncAppender">
+        <appender-ref ref="COST_FILE"/>
+        <queueSize>2048</queueSize>
+        <discardingThreshold>0</discardingThreshold>
+        <neverBlock>true</neverBlock>
+    </appender>
+
+    <logger name="CostMetrics" level="INFO" additivity="false">
+        <appender-ref ref="COST_ASYNC"/>
+    </logger>
+</configuration>

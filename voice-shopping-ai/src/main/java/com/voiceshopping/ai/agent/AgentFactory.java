@@ -3,7 +3,6 @@ package com.voiceshopping.ai.agent;
 import com.voiceshopping.ai.agent.clarify.ClarifyAgentBuilder;
 import com.voiceshopping.ai.agent.intent.IntentAgentBuilder;
 import com.voiceshopping.ai.agent.perspective.PerspectiveAgentBuilder;
-import com.voiceshopping.ai.agent.rec.RecAgentBuilder;
 import com.voiceshopping.ai.agent.emotion.EmotionAgentBuilder;
 import io.agentscope.core.ReActAgent;
 import org.springframework.stereotype.Component;
@@ -15,9 +14,13 @@ import java.util.Map;
 /**
  * Session-scoped LRU cache for main-pipeline Agent instances.
  * <p>
- * The four main agents (intent, clarify, rec, emotion) are cached per session
+ * The three main agents (intent, clarify, emotion) are cached per session
  * so InMemoryMemory persists across turns within the same session. Perspective
  * agents are transient — created fresh on each request via {@link #newPerspectiveTeam()}.
+ * <p>
+ * 历史：旧版本曾持有 RecAgent（用于 RecommendReasonService 生成推荐理由），
+ * 上版本 latency-optimization-h5-streaming 把推荐理由合并到 EmotionAgent，
+ * 本版本 cost-control-and-metrics-logging 清理掉 RecAgent 相关字段。
  */
 @Component
 public class AgentFactory {
@@ -27,20 +30,17 @@ public class AgentFactory {
 
     private final IntentAgentBuilder intentBuilder;
     private final ClarifyAgentBuilder clarifyBuilder;
-    private final RecAgentBuilder recBuilder;
     private final EmotionAgentBuilder emotionBuilder;
     private final PerspectiveAgentBuilder perspectiveBuilder;
     private final PromptLoader promptLoader;
 
     public AgentFactory(IntentAgentBuilder intentBuilder,
                         ClarifyAgentBuilder clarifyBuilder,
-                        RecAgentBuilder recBuilder,
                         EmotionAgentBuilder emotionBuilder,
                         PerspectiveAgentBuilder perspectiveBuilder,
                         PromptLoader promptLoader) {
         this.intentBuilder = intentBuilder;
         this.clarifyBuilder = clarifyBuilder;
-        this.recBuilder = recBuilder;
         this.emotionBuilder = emotionBuilder;
         this.perspectiveBuilder = perspectiveBuilder;
         this.promptLoader = promptLoader;
@@ -56,12 +56,11 @@ public class AgentFactory {
             });
 
     /**
-     * Holds the four main-pipeline Agent references for a single session.
+     * Holds the three main-pipeline Agent references for a single session.
      */
     private record AgentSet(
             ReActAgent intentAgent,
             ReActAgent clarifyAgent,
-            ReActAgent recAgent,
             ReActAgent emotionAgent
     ) {}
 
@@ -76,7 +75,6 @@ public class AgentFactory {
         return cache.computeIfAbsent(sessionId, id -> new AgentSet(
                 intentBuilder.build(),
                 clarifyBuilder.build(),
-                recBuilder.build(),
                 emotionBuilder.build()
         ));
     }
@@ -89,10 +87,6 @@ public class AgentFactory {
 
     public ReActAgent getClarifyAgent(String sessionId) {
         return get(sessionId).clarifyAgent();
-    }
-
-    public ReActAgent getRecAgent(String sessionId) {
-        return get(sessionId).recAgent();
     }
 
     public ReActAgent getEmotionAgent(String sessionId) {

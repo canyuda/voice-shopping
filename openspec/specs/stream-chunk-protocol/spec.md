@@ -115,7 +115,7 @@ TTS PCM 二进制通道 SHALL 保持不变。
 异常处理 SHALL 与现有逻辑一致：catch 后发送 `VoiceError` + fallback TTS。
 
 #### Scenario: 流式帧依次发送
-- **WHEN** streamHandle emit PRODUCTS → TEXT("别纠结，") → AUDIO(pcm) → TEXT("鸡哥给你挑了三款。") → AUDIO(pcm) → StreamDone
+- **WHEN** streamHandle emit PRODUCTS → TEXT("别纠结，") → AUDIO(pcm) → TEXT("给你挑了三款。") → AUDIO(pcm) → StreamDone
 - **THEN** WebSocket 依次发送对应 JSON/Binary 信令
 
 #### Scenario: 流式异常降级

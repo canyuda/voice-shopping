@@ -60,14 +60,14 @@ public class IntentService {
         com.voiceshopping.business.orchestrator.AgentTraceLogger.enter("INTENT",
                 "sessionId=" + sessionId + ", utterance=" + utterance);
         try {
-            return classifyInternal(sessionId, utterance);
+            return classifyInternal(sessionId, utterance, t0);
         } finally {
             com.voiceshopping.business.orchestrator.AgentTraceLogger.exit("INTENT",
                     System.currentTimeMillis() - t0, "");
         }
     }
 
-    private IntentResult classifyInternal(String sessionId, String utterance) {
+    private IntentResult classifyInternal(String sessionId, String utterance, long t0) {
         // Build user input with recent history context
         String userInput = buildUserInput(sessionId, utterance);
 
@@ -76,6 +76,10 @@ public class IntentService {
         IntentResult cached = intentCache.get(sessionId, cacheKey);
         if (cached != null) {
             log.debug("Intent cache hit for session={}", sessionId);
+            // 缓存命中：埋点不带 token/model，cacheHit=true
+            com.voiceshopping.common.cost.CostMetricsLogger.logLlm(
+                    "intent", null, 0, 0, null, null, null,
+                    System.currentTimeMillis() - t0, true);
             return cached;
         }
 
@@ -95,6 +99,10 @@ public class IntentService {
 
         if (response == null) {
             log.warn("Intent agent returned null for session={}, falling back to OUT_OF_SCOPE", sessionId);
+            // 异常路径仍埋点（成本已发生），token 字段缺省
+            com.voiceshopping.common.cost.CostMetricsLogger.logLlm(
+                    "intent", "qwen-turbo", userInput.length(), 0, null, null, null,
+                    System.currentTimeMillis() - t0, false);
             return new IntentResult(IntentEnum.OUT_OF_SCOPE, Map.of(), 0.3);
         }
 
@@ -107,6 +115,16 @@ public class IntentService {
         if (result.intent() != IntentEnum.OUT_OF_SCOPE) {
             intentCache.put(sessionId, cacheKey, result);
         }
+
+        // 成本埋点：从 ChatUsage 提取精确 token 数
+        io.agentscope.core.model.ChatUsage usage = response.getChatUsage();
+        com.voiceshopping.common.cost.CostMetricsLogger.logLlm(
+                "intent", "qwen-turbo",
+                userInput.length(), rawText != null ? rawText.length() : 0,
+                usage != null ? usage.getInputTokens() : null,
+                usage != null ? usage.getOutputTokens() : null,
+                usage != null ? usage.getTotalTokens() : null,
+                System.currentTimeMillis() - t0, false);
 
         return result;
     }

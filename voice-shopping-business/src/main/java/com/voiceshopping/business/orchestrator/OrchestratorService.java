@@ -99,7 +99,7 @@ public class OrchestratorService {
     private static final String ORDER_REPLY_CONFIRM_TEMPLATE =
             "下单成功，订单尾号 %s，1-2 天送达。还有想看的吗？";
     private static final String ORDER_REPLY_CANCEL =
-            "好的，鸡哥没给你下。想再聊点别的还是换款看看？";
+            "好的，没给你下。想再聊点别的还是换款看看？";
     private static final String ORDER_REPLY_AMBIGUOUS =
             "那你是确认要这款还是不要？";
     private static final String ORDER_REPLY_STOCK_GONE =
@@ -198,6 +198,7 @@ public class OrchestratorService {
         Timer.Sample sample = Timer.start();
         IntentEnum finalIntent = IntentEnum.OUT_OF_SCOPE;
         AgentTraceLogger.startTrace(sessionId);
+        com.voiceshopping.common.cost.CostMetricsLogger.putContext(sessionId, userId);
         long t0 = System.currentTimeMillis();
         AgentTraceLogger.enter("HANDLE",
                 String.format("sessionId=%s, userId=%s, utterance=%s", sessionId, userId, utterance));
@@ -257,6 +258,7 @@ public class OrchestratorService {
             AgentTraceLogger.exit("HANDLE", System.currentTimeMillis() - t0,
                     "finalIntent=" + finalIntent);
             AgentTraceLogger.endTrace();
+            com.voiceshopping.common.cost.CostMetricsLogger.clearContext();
         }
     }
 
@@ -274,6 +276,8 @@ public class OrchestratorService {
         Timer.Sample sample = Timer.start();
         IntentEnum finalIntent = IntentEnum.OUT_OF_SCOPE;
         final String traceId = AgentTraceLogger.startTrace(sessionId);
+        com.voiceshopping.common.cost.CostMetricsLogger.putContext(sessionId, userId);
+        final Long traceUserId = userId;
         final long t0 = System.currentTimeMillis();
         AgentTraceLogger.enter("STREAM_HANDLE",
                 String.format("sessionId=%s, userId=%s, utterance=%s", sessionId, userId, utterance));
@@ -299,6 +303,7 @@ public class OrchestratorService {
                 AgentTraceLogger.exit("STREAM_HANDLE", System.currentTimeMillis() - t0,
                         "ORDER_CONFIRM short-circuit");
                 AgentTraceLogger.endTrace();
+                com.voiceshopping.common.cost.CostMetricsLogger.clearContext();
                 return singleTurnFlux(result, shortCircuit.newRecItems());
             }
             state.setPhase(SessionPhase.RECOMMEND);
@@ -407,8 +412,9 @@ public class OrchestratorService {
         // 5. doFinally：写记忆 + 持久化状态
         Flux<StreamChunk> withPostProcessing = Flux.concat(productsFlux, textAudioFlux)
                 .doFinally(signal -> {
-                    // Reactor 切线程后 MDC 丢失，此处恢复 traceId
+                    // Reactor 切线程后 MDC 丢失，此处恢复 traceId 与 cost context
                     AgentTraceLogger.resumeTrace(traceId);
+                    com.voiceshopping.common.cost.CostMetricsLogger.putContext(sessionId, userId);
                     AgentTraceLogger.event("STREAM_FLUX",
                             "doFinally signal=" + signal + ", fullTextLen=" + fullTextCollector.length());
                     try {
@@ -442,6 +448,7 @@ public class OrchestratorService {
                                 System.currentTimeMillis() - traceStart,
                                 "finalIntent=" + finalIntent);
                         AgentTraceLogger.endTrace();
+                        com.voiceshopping.common.cost.CostMetricsLogger.clearContext();
                     }
                 });
 
@@ -874,14 +881,12 @@ public class OrchestratorService {
     }
 
     BranchOutcome runChitchat(String sessionId, String utterance) {
-        EmotionResult raw = emotionService.wrap(sessionId, utterance, "", RecommendResult.EMPTY);
-        // EmotionService produces a recommendation-style fallback when items are empty;
-        // swap it for a chitchat-style reply (D9). Drop this once the EmotionAgent
-        // prompt understands chitchat mode natively.
-        EmotionResult reply = EMOTION_EMPTY_FALLBACK.equals(raw.speechText())
-                ? new EmotionResult(CHITCHAT_FALLBACK, List.of())
-                : raw;
-        return new BranchOutcome(reply, SessionPhase.INTENT, null, null);
+        // CHITCHAT 不调 EmotionAgent，直接从池内随机抽一句兜底文案。
+        // 上版本"先调 LLM 再判断兜底"是浪费，已废弃。
+        String reply = com.voiceshopping.business.agent.ChitchatReplyPool.randomReply();
+        return new BranchOutcome(
+                new EmotionResult(reply, List.of()),
+                SessionPhase.INTENT, null, null);
     }
 
     BranchOutcome runOutOfScope() {

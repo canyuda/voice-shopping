@@ -200,7 +200,7 @@ class OrchestratorOrderConfirmTest {
 
         EmotionResult result = buildOrchestrator().handle(SESSION_ID, USER_ID, "算了不要了");
 
-        assertThat(result.speechText()).contains("鸡哥没给你下");
+        assertThat(result.speechText()).contains("没给你下");
         verify(orderService).cancel(SESSION_ID);
         verify(orderService, never()).confirm(any());
         verify(intentService, never()).classify(anyString(), anyString());

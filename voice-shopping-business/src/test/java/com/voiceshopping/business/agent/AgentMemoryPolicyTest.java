@@ -41,29 +41,6 @@ class AgentMemoryPolicyTest {
     }
 
     @Test
-    void beforeRecommendCall_keepsLast8WhenOverLimit() {
-        Memory memory = buildMemory(12);
-        ReActAgent agent = stubAgent(memory);
-
-        policy.beforeRecommendCall(agent);
-
-        assertThat(memory.getMessages()).hasSize(8);
-        // Oldest 4 dropped — first remaining message originally was index 4.
-        assertThat(memory.getMessages().get(0).getTextContent()).isEqualTo("msg-4");
-        assertThat(memory.getMessages().get(7).getTextContent()).isEqualTo("msg-11");
-    }
-
-    @Test
-    void beforeRecommendCall_belowLimitIsNoOp() {
-        Memory memory = buildMemory(5);
-        ReActAgent agent = stubAgent(memory);
-
-        policy.beforeRecommendCall(agent);
-
-        assertThat(memory.getMessages()).hasSize(5);
-    }
-
-    @Test
     void beforeEmotionCall_keepsLast40WhenOverLimit() {
         Memory memory = buildMemory(60);
         ReActAgent agent = stubAgent(memory);

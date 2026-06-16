@@ -79,6 +79,7 @@ public class EmotionService {
                 sessionId, userUtterance, userNeeds,
                 rec != null && rec.items() != null ? rec.items().size() : 0,
                 callerInfo());
+        long llmT0 = System.currentTimeMillis();
         String mood = moodDetector.detect(sessionId, userUtterance);
 
         ReActAgent agent = agentFactory.getEmotionAgent(sessionId);
@@ -98,6 +99,16 @@ public class EmotionService {
             String rawText = response != null ? response.getTextContent() : null;
             log.info("[EmotionAgent] LLM response for session={}: {}", sessionId, rawText);
 
+            // 成本埋点：从 ChatUsage 提取精确 token 数
+            io.agentscope.core.model.ChatUsage usage = response != null ? response.getChatUsage() : null;
+            com.voiceshopping.common.cost.CostMetricsLogger.logLlm(
+                    "emotion", "qwen-max",
+                    userMsg.length(), rawText != null ? rawText.length() : 0,
+                    usage != null ? usage.getInputTokens() : null,
+                    usage != null ? usage.getOutputTokens() : null,
+                    usage != null ? usage.getTotalTokens() : null,
+                    System.currentTimeMillis() - llmT0, false);
+
             String speech = parseSpeech(rawText);
             if (speech == null || speech.isBlank()) {
                 log.warn("EmotionAgent produced empty speech for session={}, using fallback", sessionId);
@@ -106,6 +117,11 @@ public class EmotionService {
             return new EmotionResult(speech, rec.items());
         } catch (Exception e) {
             log.warn("EmotionAgent call/parse failed for session={}, using fallback: {}", sessionId, e.getMessage());
+            // 异常路径仍埋点（成本可能已经发生），token 字段缺省
+            com.voiceshopping.common.cost.CostMetricsLogger.logLlm(
+                    "emotion", "qwen-max",
+                    userMsg.length(), 0, null, null, null,
+                    System.currentTimeMillis() - llmT0, false);
             return new EmotionResult(fallback(rec), rec.items());
         }
     }

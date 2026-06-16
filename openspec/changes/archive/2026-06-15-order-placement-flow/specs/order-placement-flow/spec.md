@@ -272,7 +272,7 @@ MUST 仅在事务提交后异步执行，事务回滚时 MUST NOT 触发。
 
 1. 读 `pendingOrderStore.get(sessionId)`
 2. **pending 存在**：
-   - `containsNo(utterance)` 为 true → `orderService.cancel(sessionId)`，phase=`RECOMMEND`，返回话术 `"好的，鸡哥没给你下。想再聊点别的还是换款看看？"`
+   - `containsNo(utterance)` 为 true → `orderService.cancel(sessionId)`，phase=`RECOMMEND`，返回话术 `"好的，没给你下。想再聊点别的还是换款看看？"`
    - `containsYes(utterance)` 为 true →
      - try `orderService.confirm(sessionId)`：
        - 成功：phase=`ENDED`，返回话术 `"下单成功，订单尾号 {orderNo.substring(0,6)}，1-2 天送达。还有想看的吗？"`
@@ -291,7 +291,7 @@ MUST 仅在事务提交后异步执行，事务回滚时 MUST NOT 触发。
 
 #### Scenario: pending 存在 + NO → 取消回到 RECOMMEND
 - **WHEN** pending 存在，utterance="算了不要了"
-- **THEN** `orderService.cancel` 被调用，phase=RECOMMEND，speechText 含"鸡哥没给你下"
+- **THEN** `orderService.cancel` 被调用，phase=RECOMMEND，speechText 含"没给你下"
 
 #### Scenario: pending 存在 + 模糊 → 再次反问
 - **WHEN** pending 存在，utterance="嗯，这个怎么样"

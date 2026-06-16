@@ -83,7 +83,13 @@ public class ParallelRecommendService {
         CompletableFuture<List<RecommendedItem>> candidatesF = CompletableFuture.supplyAsync(() -> {
             String query = retriever.buildQuery(utterance, slots);
             log.debug("Embedding query: {}", query);
+            // 在调用方包裹埋点，避免改 EmbeddingService 签名影响其他调用者；
+            // SDK 不暴露 embedding 的 token usage，inputTokens 缺省。
+            long embedT0 = System.currentTimeMillis();
             float[] queryVector = embeddingService.embed(query);
+            com.voiceshopping.common.cost.CostMetricsLogger.logEmbedding(
+                    "text-embedding-v3", query.length(), null,
+                    System.currentTimeMillis() - embedT0);
 
             SessionScope scope = resolveScope(sessionId, userId);
             Filter scopeFilter = scopeFilterBuilder.build(scope);

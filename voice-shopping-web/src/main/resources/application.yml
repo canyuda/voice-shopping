@@ -76,7 +76,17 @@ voice-shopping:
       model: ${VOICE_TTS_MODEL:cosyvoice-v1}
       voice: ${VOICE_TTS_VOICE:longwan}
   perspective:
-    enabled: true
+    # 默认关闭以省成本（每轮 3 次 qwen-plus 调用约占单轮 LLM token 46%）。
+    # 如需做转化率 A/B 测试，置为 true 即可恢复。代码完整保留，仅切配置。
+    enabled: false
+  clarify:
+    # 单字段缺失时的模板问句表，命中即直接返回，跳过 ClarifyAgent LLM 调用。
+    # 多字段缺失仍走 LLM 组合。
+    single-slot-templates:
+      scenario: "你一般在什么场地用？"
+      budget: "你预算大概多少？"
+      gender: "是男款还是女款？"
+      brand: "你有想要的品牌吗？"
   streaming:
     # 候选断点（逗号等）超时时间，超时后 flush 为独立句子送 TTS
     sentence-aggregate-timeout-ms: ${STREAMING_SENTENCE_TIMEOUT:50}
